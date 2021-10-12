@@ -16,11 +16,18 @@
 #include "cparse.h"
 #include <ctype.h>
 #include "javadoc.h"
+#include "dohint.h"
+#include "swig_string.h"
+#include "swig_jni_signature_struct.h"
 
 /* Hash type used for upcalls from C/C++ */
 typedef DOH UpcallData;
 
 class JAVA:public Language {
+  SwigString* swigStringForDebug; //for debug
+//  SwigString *debugString = (SwigString *) (((DohBase *) wname)->data);
+  std::vector<SwigJniSignatureStruct> jniSignatures;
+
   static const char *usage;
   const String *empty_string;
   const String *public_string;
@@ -94,6 +101,10 @@ class JAVA:public Language {
 
   enum EnumFeature { SimpleEnum, TypeunsafeEnum, TypesafeEnum, ProperEnum };
 
+  //Jni dynamic register stuff( which contains Jni Java Entrance Function Signature ):
+  List *jni_register_methods_seq;
+  int n_jni_register_methods;
+
 public:
 
   /* -----------------------------------------------------------------------------
@@ -163,7 +174,9 @@ public:
       n_directors(0),
       first_class_dmethod(0),
       curr_class_dmethod(0),
-      nesting_depth(0){
+      nesting_depth(0),
+      jni_register_methods_seq(NULL),
+      n_jni_register_methods(0){
     /* for now, multiple inheritance in directors is disabled, this
        should be easy to implement though */
     director_multiple_inheritance = 0;
@@ -451,6 +464,8 @@ public:
     dmethods_table = NewHash();
     n_dmethods = 0;
     n_directors = 0;
+    jni_register_methods_seq = NewList();
+    n_jni_register_methods = 0;
     jnipackage = NewString("");
     package_path = NewString("");
 
@@ -492,7 +507,11 @@ public:
       Replaceall(package_path, ".", "/");
     }
     String *jniname = makeValidJniName(imclass_name);
-    Printf(wrapper_name, "Java_%s%s_%%f", jnipackage, jniname);
+    //Xuanyi修改点: JNI方法名去除Java_包名_模块名前缀
+//    Printf(wrapper_name, "Java_%s%s_%%f", jnipackage, jniname);
+    //jnipackage类似"com_bytedance_ies_nle_editor_1jni_"
+    //jniname类似"NLEEditorJniJNI"
+    Printf(wrapper_name, "%%f"); //%f最终会被具体的方法名替代，如NLETrack_1addSlot
     Delete(jniname);
 
     Swig_name_register("wrapper", Char(wrapper_name));
@@ -560,6 +579,7 @@ public:
 
       if (n_dmethods > 0) {
 	Putc('\n', f_im);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "获取swig_module_init Java入口函数\n", "");
 	Printf(f_im, "  private final static native void swig_module_init();\n");
 	Printf(f_im, "  static {\n");
 	Printf(f_im, "    swig_module_init();\n");
@@ -664,6 +684,7 @@ public:
       Printv(f_wrappers, upcasts_code, NIL);
 
     emitDirectorUpcalls();
+    emitRegisterNatives();
 
     Printf(f_wrappers, "#ifdef __cplusplus\n");
     Printf(f_wrappers, "}\n");
@@ -893,8 +914,13 @@ public:
     // Make a wrapper name for this function
     String *jniname = makeValidJniName(overloaded_name);
     String *wname = Swig_name_wrapper(jniname);
+//    SwigString *debugString = (SwigString *) (((DohBase *) wname)->data);
 
     Delete(jniname);
+
+      //Xuanyi修改点
+      Swig_director_parms_fixup(l);
+      //Xuanyi修改点
 
     /* Attach the non-standard typemaps to the parameter list. */
     Swig_typemap_attach_parms("jni", l, f);
@@ -919,6 +945,13 @@ public:
       Wrapper_add_localv(f, "jresult", c_return_type, "jresult = 0", NIL);
 
     Printv(f->def, "SWIGEXPORT ", c_return_type, " JNICALL ", wname, "(JNIEnv *jenv, jclass jcls", NIL);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理一般JNI方法,c_return_type=%s,wname=%s\n", c_return_type, wname);
+
+      //Xuanyi修改点
+      String *javaret_desc = NULL;
+      String* javaparam_desc = NULL;
+      javaret_desc = obtainJniRetDesc(n, wname);
+      //Xuanyi修改点
 
     // Usually these function parameters are unused - The code below ensures
     // that compilers do not issue such a warning if configured to do so.
@@ -947,6 +980,11 @@ public:
     }
 
     Printf(imclass_class_code, "  public final static native %s %s(", im_return_type, overloaded_name);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "一般JNI方法对应的java方法,im_return_type=%s, overloaded_name=%s\n", im_return_type, overloaded_name);
+
+      if(Cmp("NLETrack_1removeVideoEffect", wname) == 0){
+          int bb = 2;
+      }
 
     num_arguments = emit_num_arguments(l);
 
@@ -1019,6 +1057,14 @@ public:
       Delete(c_param_type);
       Delete(arg);
     }
+
+    //Xuanyi修改点
+    javaparam_desc =  obtainJniParamDesc(n, wname, l, is_destructor);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "wname=%s, 获取Java函数签名, 返回值部分javaret_desc=%s, 函数签名参数部分javaparam_desc_desc=%s\n", wname, javaret_desc, javaparam_desc);
+    addJniRegisterSignature(overloaded_name, javaret_desc, javaparam_desc, wname);
+    Delete(javaret_desc);
+    Delete(javaparam_desc);
+    //Xuanyi修改点
 
     Printv(f->code, nondir_args, NIL);
     Delete(nondir_args);
@@ -1919,6 +1965,7 @@ public:
 	  "    *(", bsmartnamestr, " **)&baseptr = argp1 ? new ", bsmartnamestr, "(*argp1) : 0;\n"
 	  "    return baseptr;\n"
 	  "}\n", "\n", NIL);
+      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理智能指针类型转换JNI方法\n", "");
 
       Delete(rbaseclassname);
       Delete(rclassname);
@@ -1933,6 +1980,7 @@ public:
 	  "    *(", baseclassname, " **)&baseptr = *(", classname, " **)&jarg1;\n"
 	  "    return baseptr;\n"
 	  "}\n", "\n", NIL);
+      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理类型转换JNI方法\n", "");
     }
 
     Delete(baseclassname);
@@ -3801,6 +3849,7 @@ public:
       Printf(f_runtime, "}\n");
 
       Printf(w->def, "SWIGEXPORT void JNICALL Java_%s%s_%s(JNIEnv *jenv, jclass jcls) {", jnipackage, jni_imclass_name, swig_module_init_jni);
+      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "获取Director回调的Java函数签名module_init\n", "");
       Printf(w->code, "static struct {\n");
       Printf(w->code, "  const char *method;\n");
       Printf(w->code, "  const char *signature;\n");
@@ -3828,6 +3877,68 @@ public:
     }
   }
 
+    /*----------------------------------------------------------------------
+     * emitRegisterNatives()
+     *--------------------------------------------------------------------*/
+
+    void emitRegisterNatives() {
+        Wrapper *w = NewWrapper();
+        String *jni_imclass_name = makeValidJniName(imclass_name);
+        String *swig_module_init = NewString("swig_module_init");
+        String *swig_module_init_jni = makeValidJniName(swig_module_init);
+        String *dmethod_data = NewString("");
+
+
+        Printf(w->def, "SWIGEXPORT int JNICALL swigRegisterNatives(JNIEnv *jenv) {");
+        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "生成swigRegisterNatives方法\n", "");
+
+        if(n_jni_register_methods){
+            String *jniname = makeValidJniName(imclass_name);
+            Printf(dmethod_data, "static const char *jniFunEntryClassName = \"%s/%s\";\n", package_path, jniname);
+            Delete(jniname);
+
+            Printf(dmethod_data, "static const JNINativeMethod jniFuncEntryMethods[] = {\n");
+
+            int n_methods = 0;
+            Iterator udata_iter;
+
+            udata_iter = First(jni_register_methods_seq);
+            while (udata_iter.item) {
+                UpcallData *udata = udata_iter.item;
+                Printf(dmethod_data, "  { \"%s\", \"%s\", %s}", Getattr(udata, "javaFunName"), Getattr(udata, "javaFunSignature"), Getattr(udata, "nativeFunString"));
+                ++n_methods;
+
+                udata_iter = Next(udata_iter);
+
+                if (udata_iter.item)
+                    Putc(',', dmethod_data);
+                Putc('\n', dmethod_data);
+            }
+
+            Printf(dmethod_data, "}");
+        }
+        Printv(w->code, dmethod_data, NIL);
+
+        Printf(w->code, "\nint methodsCount = sizeof(jniFuncEntryMethods) / sizeof(jniFuncEntryMethods[0]);\n");
+        Printf(w->code, "jclass javaClass = env->FindClass(javaClassName);\n");
+        Printf(w->code, "if (javaClass == nullptr) {\n");
+        Printf(w->code, "  return JNI_FALSE;\n");
+        Printf(w->code, " }\n");
+        Printf(w->code, "if (env->RegisterNatives(javaClass, methods, methodsCount) < 0) {\n");
+        Printf(w->code, "  return JNI_FALSE;\n");
+        Printf(w->code, " }\n");
+        Printf(w->code, "return JNI_TRUE;\n");
+
+        Printf(w->code, "}\n");
+
+        Wrapper_print(w, f_wrappers);
+        Delete(dmethod_data);
+        Delete(swig_module_init_jni);
+        Delete(swig_module_init);
+        Delete(jni_imclass_name);
+        DelWrapper(w);
+    }
+
   /*----------------------------------------------------------------------
    * emitDirectorExtraMethods()
    *
@@ -3853,6 +3964,7 @@ public:
     Printf(code_wrap->def,
 	   "SWIGEXPORT void JNICALL Java_%s%s_%s(JNIEnv *jenv, jclass jcls, jobject jself, jlong objarg, jboolean jswig_mem_own, "
 	   "jboolean jweak_global) {\n", jnipackage, jni_imclass_name, swig_director_connect_jni);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理director_connect方法\n", "");
 
     if (smartptr) {
       Printf(code_wrap->code, "  %s *obj = *((%s **)&objarg);\n", smartptr, smartptr);
@@ -3887,6 +3999,7 @@ public:
     Printf(code_wrap->def,
 	   "SWIGEXPORT void JNICALL Java_%s%s_%s(JNIEnv *jenv, jclass jcls, jobject jself, jlong objarg, jboolean jtake_or_release) {\n",
 	   jnipackage, jni_imclass_name, changeown_jnimethod_name);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理change_ownership方法\n", "");
 
     if (Len(smartptr)) {
         Printf(code_wrap->code, "  %s *obj = *((%s **)&objarg);\n", smartptr, smartptr);
@@ -4014,6 +4127,12 @@ public:
    * --------------------------------------------------------------- */
 
   int classDirectorMethod(Node *n, Node *parent, String *super) {
+      SwigType *nodeType = Getattr(n, "type");
+      SwigType *parentNodeType = Getattr(parent, "type");
+      SwigType *parentName = Getattr(parent, "name");
+
+
+
     String *c_classname = Getattr(parent, "name");
     String *name = Getattr(n, "name");
     String *symname = Getattr(n, "sym:name");
@@ -4048,6 +4167,11 @@ public:
     int classmeth_off = curr_class_dmethod - first_class_dmethod;
     bool ignored_method = GetFlag(n, "feature:ignore") ? true : false;
     String *qualified_classname = getProxyName(getClassName());
+
+      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "classDirectorMethod-> nodeType=%s, parentNodeType=%s, name=%s, parentName=%s, symname=%s, value=%s, decl=%s\n", nodeType, parentNodeType, name, parentName, symname, value, decl);
+      Delete(nodeType);
+      Delete(parentNodeType);
+      Delete(parentName);
 
     // Kludge Alert: functionWrapper sets sym:overload properly, but it
     // isn't at this point, so we have to manufacture it ourselves. At least
@@ -4120,6 +4244,7 @@ public:
     SwigType *adjustedreturntype = covariant ? covariant : returntype;
     Parm *adjustedreturntypeparm = NewParmNode(adjustedreturntype, n);
 
+    //这里的逻辑应该不能简化！！！！！
     if (Swig_typemap_lookup("directorin", adjustedreturntypeparm, "", 0)
 	&& (cdesc = Getattr(adjustedreturntypeparm, "tmap:directorin:descriptor"))) {
 
@@ -4130,7 +4255,7 @@ public:
       Append(classret_desc, jnidesc_canon);
       Delete(jnidesc_canon);
     } else {
-      Swig_warning(WARN_TYPEMAP_DIRECTORIN_UNDEF, input_file, line_number, "No or improper directorin typemap defined for %s for use in %s::%s (skipping director method)\n", 
+      Swig_warning(WARN_TYPEMAP_DIRECTORIN_UNDEF, input_file, line_number, "No or improper directorin typemap defined for %s for use in %s::%s (skipping director method)\n",
 	  SwigType_str(returntype, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
       output_director = false;
     }
@@ -4150,23 +4275,27 @@ public:
       if (Swig_typemap_lookup("directorin", tp, "", 0)
 	  && (jdesc = Getattr(tp, "tmap:directorin:descriptor"))) {
 
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s->\n", name);
 	// Objects marshalled passing a Java class across JNI boundary use jobject - the nouse flag indicates this
 	// We need the specific Java class name instead of the generic 'Ljava/lang/Object;'
-	if (GetFlag(tp, "tmap:directorin:nouse"))
-	  jdesc = cdesc;
+	if (GetFlag(tp, "tmap:directorin:nouse")) {
+        jdesc = cdesc;
+        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> apply cdesc=%s\n", name, cdesc);
+    }
 	String *jnidesc_canon = canonicalizeJNIDescriptor(jdesc, tp);
 	Append(jniret_desc, jnidesc_canon);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jniret_des=%s\n", name, jniret_desc);
 	Delete(jnidesc_canon);
       } else {
 	Swig_warning(WARN_TYPEMAP_DIRECTORIN_UNDEF, input_file, line_number,
-		     "No or improper directorin typemap defined for %s for use in %s::%s (skipping director method)\n", 
+		     "No or improper directorin typemap defined for %s for use in %s::%s (skipping director method)\n",
 		     SwigType_str(c_ret_type, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
 	output_director = false;
       }
 
       Delete(tp);
     } else {
-      Swig_warning(WARN_JAVA_TYPEMAP_JNI_UNDEF, input_file, line_number, "No jni typemap defined for %s for use in %s::%s (skipping director method)\n", 
+      Swig_warning(WARN_JAVA_TYPEMAP_JNI_UNDEF, input_file, line_number, "No jni typemap defined for %s for use in %s::%s (skipping director method)\n",
 	  SwigType_str(returntype, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
       output_director = false;
     }
@@ -4234,6 +4363,7 @@ public:
 	&& (jdesc = Getattr(tp, "tmap:directorin:descriptor"))) {
       String *jni_canon = canonicalizeJNIDescriptor(jdesc, tp);
       Append(jnidesc, jni_canon);
+        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc=%s\n", name, jnidesc);
       Delete(jni_canon);
       Delete(tm);
     } else {
@@ -4251,7 +4381,7 @@ public:
       while (checkAttribute(p, "tmap:directorin:numinputs", "0")) {
 	p = Getattr(p, "tmap:directorin:next");
       }
-
+      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc循环\n", name);
       SwigType *pt = Getattr(p, "type");
       String *ln = makeParameterName(n, p, i, false);
       String *c_param_type = NULL;
@@ -4283,12 +4413,15 @@ public:
 	    && (tm = Getattr(p, "tmap:directorin"))
 	    && (cdesc = Getattr(p, "tmap:directorin:descriptor"))) {
 
-	  // Objects marshalled by passing a Java class across the JNI boundary use jobject as the JNI type - 
+	  // Objects marshalled by passing a Java class across the JNI boundary use jobject as the JNI type -
 	  // the nouse flag indicates this. We need the specific Java class name instead of the generic 'Ljava/lang/Object;'
-	  if (GetFlag(tp, "tmap:directorin:nouse"))
-	    jdesc = cdesc;
+	  if (GetFlag(tp, "tmap:directorin:nouse")) {
+          jdesc = cdesc;
+          Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc循环，apply cdesc=%s\n", name, cdesc);
+      }
 	  String *jni_canon = canonicalizeJNIDescriptor(jdesc, tp);
 	  Append(jnidesc, jni_canon);
+        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc=%s\n", name, jnidesc);
 	  Delete(jni_canon);
 
 	  Setattr(p, "emit:directorinput", arg);
@@ -4324,12 +4457,12 @@ public:
 	      Append(classdesc, jni_canon);
 	      Delete(jni_canon);
 	    } else {
-	      Swig_warning(WARN_JAVA_TYPEMAP_JAVADIRECTORIN_UNDEF, input_file, line_number, "No javadirectorin typemap defined for %s for use in %s::%s (skipping director method)\n", 
+	      Swig_warning(WARN_JAVA_TYPEMAP_JAVADIRECTORIN_UNDEF, input_file, line_number, "No javadirectorin typemap defined for %s for use in %s::%s (skipping director method)\n",
 		  SwigType_str(pt, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
 	      output_director = false;
 	    }
 	  } else {
-	    Swig_warning(WARN_JAVA_TYPEMAP_JTYPE_UNDEF, input_file, line_number, "No jtype typemap defined for %s for use in %s::%s (skipping director method)\n", 
+	    Swig_warning(WARN_JAVA_TYPEMAP_JTYPE_UNDEF, input_file, line_number, "No jtype typemap defined for %s for use in %s::%s (skipping director method)\n",
 		SwigType_str(pt, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
 	    output_director = false;
 	  }
@@ -4340,22 +4473,22 @@ public:
 	} else {
 	  if (!desc_tm) {
 	    Swig_warning(WARN_JAVA_TYPEMAP_JAVADIRECTORIN_UNDEF, input_file, line_number,
-			 "No or improper directorin typemap defined for %s for use in %s::%s (skipping director method)\n", 
+			 "No or improper directorin typemap defined for %s for use in %s::%s (skipping director method)\n",
 			 SwigType_str(c_param_type, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
 	    p = nextSibling(p);
 	  } else if (!jdesc) {
 	    Swig_warning(WARN_JAVA_TYPEMAP_DIRECTORIN_NODESC, input_file, line_number,
-			 "Missing JNI descriptor in directorin typemap defined for %s for use in %s::%s (skipping director method)\n", 
+			 "Missing JNI descriptor in directorin typemap defined for %s for use in %s::%s (skipping director method)\n",
 			 SwigType_str(c_param_type, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
 	    p = Getattr(p, "tmap:directorin:next");
 	  } else if (!tm) {
 	    Swig_warning(WARN_JAVA_TYPEMAP_JAVADIRECTORIN_UNDEF, input_file, line_number,
-			 "No or improper directorin typemap defined for argument %s for use in %s::%s (skipping director method)\n", 
+			 "No or improper directorin typemap defined for argument %s for use in %s::%s (skipping director method)\n",
 			 SwigType_str(pt, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
 	    p = nextSibling(p);
 	  } else if (!cdesc) {
 	    Swig_warning(WARN_JAVA_TYPEMAP_DIRECTORIN_NODESC, input_file, line_number,
-			 "Missing JNI descriptor in directorin typemap defined for %s for use in %s::%s (skipping director method)\n", 
+			 "Missing JNI descriptor in directorin typemap defined for %s for use in %s::%s (skipping director method)\n",
 			 SwigType_str(pt, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
 	    p = Getattr(p, "tmap:directorin:next");
 	  }
@@ -4364,7 +4497,7 @@ public:
 	}
 
       } else {
-	Swig_warning(WARN_JAVA_TYPEMAP_JNI_UNDEF, input_file, line_number, "No jni typemap defined for %s for use in %s::%s (skipping director method)\n", 
+	Swig_warning(WARN_JAVA_TYPEMAP_JNI_UNDEF, input_file, line_number, "No jni typemap defined for %s for use in %s::%s (skipping director method)\n",
 	    SwigType_str(pt, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
 	output_director = false;
 	p = nextSibling(p);
@@ -4972,6 +5105,316 @@ public:
   NestedClassSupport nestedClassesSupport() const {
     return NCS_Full;
   }
+
+  /*----------------------------------------------------------------------
+   * obtainJniRetDesc()
+   *--------------------------------------------------------------------*/
+
+  String *obtainJniRetDesc(Node * n, String *wname){
+      SwigType *returntype = Getattr(n, "type");
+      SwigType *c_ret_type = NULL;
+      String *jniret_desc = NewString("");
+
+      String *cdesc = NULL;
+      SwigType *covariant = Getattr(n, "covariant");
+      SwigType *adjustedreturntype = covariant ? covariant : returntype;
+      Parm *adjustedreturntypeparm = NewParmNode(adjustedreturntype, n);
+
+      //这里的逻辑应该不能简化！！！！！
+      if (Swig_typemap_lookup("directorin", adjustedreturntypeparm, "", 0)
+          && (cdesc = Getattr(adjustedreturntypeparm, "tmap:directorin:descriptor"))) {
+
+          // Note that in the case of polymorphic (covariant) return types, the
+          // method's return type is changed to be the base of the C++ return
+          // type
+//          String *jnidesc_canon = canonicalizeJNIDescriptor(cdesc, adjustedreturntypeparm);
+//          Append(classret_desc, jnidesc_canon);
+//          Delete(jnidesc_canon);
+      } else {
+//          Swig_warning(WARN_TYPEMAP_DIRECTORIN_UNDEF, input_file, line_number, "FunctionWrapper->obtainJniRetDesc->No or improper directorin typemap defined for %s for use in %s (skipping director method)\n",
+//                       SwigType_str(returntype, 0), wname);
+//          output_director = false;
+      }
+
+      /* Get the JNI field descriptor for this return type, add the JNI field descriptor
+         to jniret_desc */
+      if ((c_ret_type = Swig_typemap_lookup("jni", n, "", 0))) {
+          Parm *tp = NewParmNode(c_ret_type, n);
+
+//          if (!is_void && !ignored_method) {
+//              String *jretval_decl = NewStringf("%s jresult", c_ret_type);
+//              Wrapper_add_localv(w, "jresult", jretval_decl, "= 0", NIL);
+//              Delete(jretval_decl);
+//          }
+
+          String *jdesc = NULL;
+          if (Swig_typemap_lookup("directorin", tp, "", 0)
+              && (jdesc = Getattr(tp, "tmap:directorin:descriptor"))) {
+
+//              Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "FunctionWrapper->obtainJniRetDesc->wame=%s->\n", wname);
+              // Objects marshalled passing a Java class across JNI boundary use jobject - the nouse flag indicates this
+              // We need the specific Java class name instead of the generic 'Ljava/lang/Object;'
+              if (GetFlag(tp, "tmap:directorin:nouse")) {
+                  jdesc = cdesc;
+//                  Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "FunctionWrapper->obtainJniRetDesc->wame=%s, apply cdesc=%s\n", wname, cdesc);
+              }
+              String *jnidesc_canon = canonicalizeJNIDescriptor(jdesc, tp);
+              Append(jniret_desc, jnidesc_canon);
+//              Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "FunctionWrapper->obtainJniRetDesc->wame=%s, jniret_des=%s\n", wname, jniret_desc);
+              Delete(jnidesc_canon);
+          } else {
+//              Swig_warning(WARN_TYPEMAP_DIRECTORIN_UNDEF, input_file, line_number,
+//                           "FunctionWrapper->obtainJniRetDesc->No or improper directorin typemap defined for %s for use in %s (skipping director method)\n",
+//                           SwigType_str(c_ret_type, 0), wname);
+//              output_director = false;
+          }
+
+          Delete(tp);
+      } else {
+//          Swig_warning(WARN_JAVA_TYPEMAP_JNI_UNDEF, input_file, line_number, "FunctionWrapper->obtainJniRetDesc->No jni typemap defined for %s for use in %s (skipping director method)\n",
+//                       SwigType_str(returntype, 0), wname);
+//          output_director = false;
+      }
+
+      Delete(adjustedreturntypeparm);
+
+      Delete(c_ret_type);
+      //delete jinret_desc outside of this function.
+//      Delete(jniret_desc);
+      return jniret_desc;
+  }
+
+  /* -----------------------------------------------------------------------------
+   * obtainJniParamDesc()
+   * ----------------------------------------------------------------------------- */
+
+
+  String *obtainJniParamDesc(Node* n, String *wname, ParmList *l, bool is_destructor){
+      String *jnidesc = NewString(""); // delete jnidesc outside of this function
+      int i;
+      Parm *p;
+      String *tm;
+
+//      String* haha = NewString("VecNLEPointSPtrConst_1doAdd_1_1SWIG_10");
+      if(Cmp("NLETrack_1removeVideoEffect", wname) == 0){
+          int bb = 2;
+      }
+
+      int num_arguments = 0;
+      num_arguments = emit_num_arguments(l);
+      /* Go through argument list, convert from native to Java */
+//      for (i = 0, p = l; p; ++i) {
+      for (i = 0, p = l; i < num_arguments; i++) {
+          /* Is this superfluous? */
+//          while (checkAttribute(p, "tmap:directorin:numinputs", "0")) {
+//              p = Getattr(p, "tmap:directorin:next");
+//          }
+          while (checkAttribute(p, "tmap:in:numinputs", "0")) {
+              p = Getattr(p, "tmap:in:next");
+          }
+//          Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0,
+//                           "FunctionWrapper->obtainJniParamDesc->name=%s, 循环获取函数参数:%d\n", wname, i);
+          SwigType *pt = Getattr(p, "type");
+//          String *ln = makeParameterName(n, p, i, false);
+          String *c_param_type = NULL;
+//          String *c_decl = NewString("");
+//          String *arg = NewString("");
+//
+//          Printf(arg, "j%s", ln);
+
+//          /* Add various typemap's 'throws' clauses */
+//          addThrows(n, "tmap:directorin", p);
+//          addThrows(n, "tmap:out", p);
+//
+//          /* And add to the upcall args */
+//          Printf(jupcall_args, ", %s", arg);
+
+          /* Get parameter's intermediary C type */
+          if ((c_param_type = Getattr(p, "tmap:jni"))) {
+              Parm *tp = NewParm(c_param_type, Getattr(p, "name"), n);
+              String *desc_tm = NULL, *jdesc = NULL, *cdesc = NULL;
+
+//              /* Add to local variables */
+//              Printf(c_decl, "%s %s", c_param_type, arg);
+//              if (!ignored_method)
+//                  Wrapper_add_localv(w, arg, c_decl, (!(SwigType_ispointer(pt) || SwigType_isreference(pt)) ? "" : "= 0"), NIL);
+
+              /* Add input marshalling code and update JNI field descriptor */
+//              if ((desc_tm = Swig_typemap_lookup("directorin", tp, "", 0))
+//                  && (jdesc = Getattr(tp, "tmap:directorin:descriptor"))
+              if ((desc_tm = Swig_typemap_lookup("directorin", tp, "", 0))
+                  && (jdesc = Getattr(tp, "tmap:directorin:descriptor"))
+//                  && (tm = Getattr(p, "tmap:directorin"))
+//                  && (cdesc = Getattr(p, "tmap:directorin:descriptor"))
+                  ) {
+//                  tm = Getattr(p, "tmap:directorin");
+//                  cdesc = Getattr(p, "tmap:directorin:descriptor");
+                  tm = Getattr(p, "tmap:directorin");
+                  cdesc = Getattr(p, "tmap:directorin:descriptor");
+
+                  // Objects marshalled by passing a Java class across the JNI boundary use jobject as the JNI type -
+                  // the nouse flag indicates this. We need the specific Java class name instead of the generic 'Ljava/lang/Object;'
+                  if (GetFlag(tp, "tmap:directorin:nouse")) {
+                      jdesc = cdesc;
+//                      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "FunctionWrapper->obtainJniParamDesc->name=%s, jnidesc循环，apply cdesc=%s\n", wname, cdesc);
+                  }
+                  String *jni_canon = canonicalizeJNIDescriptor(jdesc, tp);
+                  Append(jnidesc, jni_canon);
+//                  Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "FunctionWrapper->obtainJniParamDesc->name=%s, jnidesc=%s\n", wname, jnidesc);
+                  Delete(jni_canon);
+
+                  // Premature garbage collection prevention parameter
+                  if (!is_destructor) {
+                      String *pgc_parameter = prematureGarbageCollectionPreventionParameter(pt,p);
+                      if (pgc_parameter) {
+                          Parm *pgc_tp = NewParm(pgc_parameter, Getattr(p, "name"), n);
+                          String *gpc_desc_tm = Swig_typemap_lookup("directorin", pgc_tp, "", 0);
+                          String *gpc_jdesc = Getattr(pgc_tp, "tmap:directorin:descriptor");
+                          String *gpc_jni_canon = canonicalizeJNIDescriptor(gpc_jdesc, pgc_tp);
+                          Append(jnidesc, gpc_jni_canon);
+//                          Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "FunctionWrapper->obtainJniParamDesc->name=%s, jnidesc=%s\n", wname, jnidesc);
+                          Delete(gpc_jni_canon);
+//                          Parm *b = NewParm(pgc_parameter, Getattr(p, "sym:name"), n);
+//                          String *b1 = Swig_typemap_lookup("directorin", b, "", 0);
+//                          String *b2 = Getattr(b, "tmap:directorin:descriptor");
+//                          String *b3 = canonicalizeJNIDescriptor(b2, b);
+//                          Parm *c = NewParm(pgc_parameter, Getattr(p, "wrap:name"), n);
+//                          String *c1 = Swig_typemap_lookup("directorin", c, "", 0);
+//                          String *c2 = Getattr(c, "tmap:directorin:descriptor");
+//                          String *c3 = canonicalizeJNIDescriptor(c2, c);
+//                          Parm *d = NewParm(pgc_parameter, Getattr(p, "interface:name"), n);
+//                          String *d1 = Swig_typemap_lookup("directorin", d, "", 0);
+//                          String *d2 = Getattr(d, "tmap:directorin:descriptor");
+//                          String *d3 = canonicalizeJNIDescriptor(d2, d);
+//                          int z = 1;
+                      }
+                  }
+
+//                  Setattr(p, "emit:directorinput", arg);
+//                  Replaceall(tm, "$input", arg);
+//                  Replaceall(tm, "$owner", "0");
+//
+//                  if (Len(tm))
+//                      if (!ignored_method)
+//                          Printf(w->code, "%s\n", tm);
+
+//                  /* Add parameter to the intermediate class code if generating the
+//                   * intermediate's upcall code */
+//                  if ((tm = Getattr(p, "tmap:jtype"))) {
+//                      String *din = Copy(Getattr(p, "tmap:javadirectorin"));
+//                      addThrows(n, "tmap:javadirectorin", p);
+//
+//                      if (din) {
+//                          Replaceall(din, "$module", module_class_name);
+//                          Replaceall(din, "$imclassname", imclass_name);
+//                          substituteClassname(pt, din);
+//                          Replaceall(din, "$jniinput", ln);
+//
+//                          if (i > 0)
+//                              Printf(imcall_args, ", ");
+//                          Printf(callback_def, ", %s %s", tm, ln);
+//
+//                          if (Cmp(din, ln)) {
+//                              Printv(imcall_args, din, NIL);
+//                          } else
+//                              Printv(imcall_args, ln, NIL);
+//
+//                          jni_canon = canonicalizeJNIDescriptor(cdesc, p);
+//                          Append(classdesc, jni_canon);
+//                          Delete(jni_canon);
+//                      } else {
+//                          Swig_warning(WARN_JAVA_TYPEMAP_JAVADIRECTORIN_UNDEF, input_file, line_number, "No javadirectorin typemap defined for %s for use in %s::%s (skipping director method)\n",
+//                                       SwigType_str(pt, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
+//                          output_director = false;
+//                      }
+//                  } else {
+//                      Swig_warning(WARN_JAVA_TYPEMAP_JTYPE_UNDEF, input_file, line_number, "No jtype typemap defined for %s for use in %s::%s (skipping director method)\n",
+//                                   SwigType_str(pt, 0), SwigType_namestr(c_classname), SwigType_namestr(name));
+//                      output_director = false;
+//                  }
+
+//                  p = Getattr(p, "tmap:directorin:next");
+                  p = Getattr(p, "tmap:in:next");
+
+                  Delete(desc_tm);
+              } else {
+//                  if (!desc_tm) {
+//                      Swig_warning(WARN_JAVA_TYPEMAP_JAVADIRECTORIN_UNDEF, input_file, line_number,
+//                                   "FunctionWrapper->obtainJniParamDesc->No or improper directorin typemap defined for %s for use in %s (skipping director method)\n",
+//                                   SwigType_str(c_param_type, 0),
+//                                   SwigType_namestr(c_classname),
+//                                   SwigType_namestr(wname));
+//                      p = nextSibling(p);
+//                  } else if (!jdesc) {
+//                      Swig_warning(WARN_JAVA_TYPEMAP_DIRECTORIN_NODESC, input_file, line_number,
+//                                   "FunctionWrapper->obtainJniParamDesc->Missing JNI descriptor in directorin typemap defined for %s for use in %s (skipping director method)\n",
+//                                   SwigType_str(c_param_type, 0),
+//                                   SwigType_namestr(c_classname),
+//                                   SwigType_namestr(wname));
+//                      p = Getattr(p, "tmap:directorin:next");
+//                  }else if (!tm) {
+//                      Swig_warning(WARN_JAVA_TYPEMAP_JAVADIRECTORIN_UNDEF, input_file, line_number,
+//                                   "FunctionWrapper->obtainJniParamDesc->No or improper directorin typemap defined for argument %s for use in %s (skipping director method)\n",
+//                                   SwigType_str(pt, 0),
+//                                   SwigType_namestr(c_classname),
+//                                   SwigType_namestr(wname));
+//                      p = nextSibling(p);
+//                  } else if (!cdesc) {
+//                      Swig_warning(WARN_JAVA_TYPEMAP_DIRECTORIN_NODESC, input_file, line_number,
+//                                   "FunctionWrapper->obtainJniParamDesc->Missing JNI descriptor in directorin typemap defined for %s for use in %s (skipping director method)\n",
+//                                   SwigType_str(pt, 0),
+//                                   SwigType_namestr(c_classname),
+//                                   SwigType_namestr(wname));
+//                      p = Getattr(p, "tmap:directorin:next");
+//                  }
+
+//                  output_director = false;
+
+                  Swig_warning(WARN_JAVA_TYPEMAP_DIRECTORIN_NODESC, input_file, line_number,
+                                   "FunctionWrapper->obtainJniParamDesc-> for method %s， unable to use type %s as a function argument\n",
+                                   SwigType_namestr(wname),
+                                   SwigType_str(c_param_type, 0));
+
+                  p = nextSibling(p);
+              }
+
+          } else {
+              Swig_warning(WARN_JAVA_TYPEMAP_JNI_UNDEF, input_file, line_number, "FunctionWrapper->obtainJniParamDesc->No jni typemap defined for %s for use in %s (skipping director method)\n",
+                           SwigType_str(pt, 0),
+//                           SwigType_namestr(c_classname),
+                           SwigType_namestr(wname));
+//              output_director = false;
+              p = nextSibling(p);
+          }
+
+//          Delete(arg);
+//          Delete(c_decl);
+//          Delete(ln);
+      }
+
+      return jnidesc;
+  }
+
+  void addJniRegisterSignature(String* javafun_name, String *javaret_desc, String *javaparam_desc, String *wname) {
+      Hash *new_udata = NewHash();
+      Append(jni_register_methods_seq, new_udata);
+      n_jni_register_methods++;
+
+      String *javaFunSignature = NewString("");
+      Append(javaFunSignature, "(");
+      Append(javaFunSignature, javaparam_desc);
+      Append(javaFunSignature, ")");
+      Append(javaFunSignature, javaret_desc);
+
+      String *nativeFunString = NewString("");
+      Append(nativeFunString, "(void *) ");
+      Append(nativeFunString, wname);
+
+      Setattr(new_udata, "javaFunName", Copy(javafun_name));
+      Setattr(new_udata, "javaFunSignature", javaFunSignature);
+      Setattr(new_udata, "nativeFunString", nativeFunString);
+  }
+
 };				/* class JAVA */
 
 /* -----------------------------------------------------------------------------

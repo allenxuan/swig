@@ -23,6 +23,7 @@
 #include "swig.h"
 #include "cparse.h"
 #include <ctype.h>
+#include "swig_string.h"
 
 /* Hash table containing naming data */
 
@@ -180,6 +181,7 @@ String *Swig_name_mangle(const_String_or_char_ptr s) {
 
 String *Swig_name_wrapper(const_String_or_char_ptr fname) {
   String *r = get_naming_format_for("wrapper", "_wrap_%f");
+  //类似"Java_com_bytedance_ies_nle_editor_1jni_NLEEditorJniJNI_%f"
 
   Replace(r, "%f", fname, DOH_REPLACE_ANY);
   name_mangle(r);
