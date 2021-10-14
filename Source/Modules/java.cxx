@@ -3919,7 +3919,7 @@ public:
 
 
         Printf(w->def, "#include <regex>\n");
-        Printf(w->def, "XUANYIEXPORT int JNICALL swigRegisterNatives(JNIEnv *jenv) {");
+        Printf(w->def, "SWIGHIDE int JNICALL swigRegisterNatives(JNIEnv *jenv) {");
         Printf(w->code, "using namespace std;\n");
         Printf(w->code, "regex e(\"@p@\");\n");
         Printf(w->code, "const char *p = \"%s\"\n", package_path);
