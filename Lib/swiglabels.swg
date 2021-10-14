@@ -89,6 +89,22 @@
 # endif
 #endif
 
+#ifndef SWIGHIDE
+# if defined(_WIN32) || defined(__WIN32__) || defined(__CYGWIN__)
+#   if defined(STATIC_LINKED)
+#     define SWIGHIDE
+#   else
+#     define SWIGHIDE __declspec(dllimport)
+#   endif
+# else
+#   if defined(__GNUC__) && defined(GCC_HASCLASSVISIBILITY)
+#     define SWIGHIDE __attribute__ ((visibility("hidden")))
+#   else
+#     define SWIGHIDE
+#   endif
+# endif
+#endif
+
 /* calling conventions for Windows */
 #ifndef SWIGSTDCALL
 # if defined(_WIN32) || defined(__WIN32__) || defined(__CYGWIN__)
