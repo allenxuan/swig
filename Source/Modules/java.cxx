@@ -19,6 +19,7 @@
 #include "dohint.h"
 #include "swig_string.h"
 #include "swig_jni_signature_struct.h"
+#include <unordered_map>
 
 /* Hash type used for upcalls from C/C++ */
 typedef DOH UpcallData;
@@ -104,6 +105,9 @@ class JAVA:public Language {
   //Jni dynamic register stuff( which contains Jni Java Entrance Function Signature ):
   List *jni_register_methods_seq;
   int n_jni_register_methods;
+  std::unordered_map<std::string, std::string> jni_register_shrink_wname;
+  int jni_register_shrink_wname_index = 0;
+
 
 public:
 
@@ -176,11 +180,13 @@ public:
       curr_class_dmethod(0),
       nesting_depth(0),
       jni_register_methods_seq(NULL),
-      n_jni_register_methods(0){
+      n_jni_register_methods(0),
+      jni_register_shrink_wname_index(0){
     /* for now, multiple inheritance in directors is disabled, this
        should be easy to implement though */
     director_multiple_inheritance = 0;
     director_language = 1;
+    jni_register_shrink_wname.clear();
   }
   
   ~JAVA() {
@@ -466,6 +472,8 @@ public:
     n_directors = 0;
     jni_register_methods_seq = NewList();
     n_jni_register_methods = 0;
+    jni_register_shrink_wname.clear();
+    jni_register_shrink_wname_index = 0;
     jnipackage = NewString("");
     package_path = NewString("");
 
@@ -769,6 +777,11 @@ public:
     Delete(dmethods_table);
     dmethods_table = NULL;
     n_dmethods = 0;
+    Delete(jni_register_methods_seq);
+    jni_register_methods_seq = NULL;
+    n_jni_register_methods = 0;
+    jni_register_shrink_wname.clear();
+    jni_register_shrink_wname_index = 0;
 
     /* Close all of the files */
     Dump(f_header, f_runtime);
@@ -944,8 +957,12 @@ public:
     if (!is_void_return)
       Wrapper_add_localv(f, "jresult", c_return_type, "jresult = 0", NIL);
 
-    Printv(f->def, "SWIGEXPORT ", c_return_type, " JNICALL ", wname, "(JNIEnv *jenv, jclass jcls", NIL);
-    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理一般JNI方法,c_return_type=%s,wname=%s\n", c_return_type, wname);
+    //Xuanyi修改点
+    std::string wname_shrink = setShrinkWname(wname);
+//    Printv(f->def, "SWIGEXPORT ", c_return_type, " JNICALL ", wname, "(JNIEnv *jenv, jclass jcls", NIL);
+    Printv(f->def, "SWIGHIDE ", c_return_type, " ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls", NIL);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理一般JNI方法,c_return_type=%s,wname=%s, wname_shrink=%s\n", c_return_type, wname, wname_shrink.c_str());
+    //Xuanyi修改点
 
       //Xuanyi修改点
       String *javaret_desc = NULL;
@@ -1936,6 +1953,9 @@ public:
 
     String *classname = SwigType_namestr(c_classname);
     String *baseclassname = SwigType_namestr(c_baseclassname);
+
+    //Xuanyi修改点
+    std::string wname_shrink = setShrinkWname(wname);
     if (smart) {
       String *smartnamestr = SwigType_namestr(smart);
       String *bsmartnamestr = SwigType_namestr(smart);
@@ -1945,8 +1965,10 @@ public:
       SwigType *rbaseclassname = SwigType_typedef_resolve_all(baseclassname);
       Replaceall(bsmartnamestr, rclassname, rbaseclassname);
 
+
       Printv(upcasts_code,
-	  "SWIGEXPORT jlong JNICALL ", wname, "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+//	  "SWIGEXPORT jlong JNICALL ", wname, "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+	  "SWIGHIDE jlong ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
 	  "    jlong baseptr = 0;\n"
 	  "    ", smartnamestr, " *argp1;\n"
 	  "    (void)jenv;\n"
@@ -1963,7 +1985,8 @@ public:
       Delete(smartnamestr);
     } else {
       Printv(upcasts_code,
-	  "SWIGEXPORT jlong JNICALL ", wname, "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+//	  "SWIGEXPORT jlong JNICALL ", wname, "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+	  "SWIGHIDE jlong ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
 	  "    jlong baseptr = 0;\n"
 	  "    (void)jenv;\n"
 	  "    (void)jcls;\n"
@@ -1972,6 +1995,12 @@ public:
 	  "}\n", "\n", NIL);
       Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理类型转换JNI方法\n", "");
     }
+    String *javaret_desc = NewString("J");
+    String *javaparam_desc = NewString("J");
+    addJniRegisterSignature(upcast_method_name, javaret_desc, javaparam_desc, wname);
+    Delete(javaret_desc);
+    Delete(javaparam_desc);
+    //Xuanyi修改点
 
     Delete(baseclassname);
     Delete(classname);
@@ -3880,14 +3909,18 @@ public:
         String *dmethod_data = NewString("");
 
 
-        Printf(w->def, "SWIGEXPORT int JNICALL swigRegisterNatives(JNIEnv *jenv) {");
+        Printf(w->def, "#include <regex>\n");
+        Printf(w->def, "XUANYIEXPORT int JNICALL swigRegisterNatives(JNIEnv *jenv) {");
+        Printf(w->code, "using namespace std;\n");
+        Printf(w->code, "regex e(\"@p@\");\n");
+        Printf(w->code, "const char *p = \"%s\"\n", package_path);
+        String *jniname = makeValidJniName(imclass_name);
+        Printf(w->code, "static const char *jniFunEntryClassName = \"%s/%s\";\n", package_path, jniname);
+        Delete(jniname);
+
         Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "生成swigRegisterNatives方法\n", "");
 
         if(n_jni_register_methods){
-            String *jniname = makeValidJniName(imclass_name);
-            Printf(dmethod_data, "static const char *jniFunEntryClassName = \"%s/%s\";\n", package_path, jniname);
-            Delete(jniname);
-
             Printf(dmethod_data, "static const JNINativeMethod jniFuncEntryMethods[] = {\n");
 
             int n_methods = 0;
@@ -3896,7 +3929,10 @@ public:
             udata_iter = First(jni_register_methods_seq);
             while (udata_iter.item) {
                 UpcallData *udata = udata_iter.item;
-                Printf(dmethod_data, "  { \"%s\", \"%s\", %s}", Getattr(udata, "javaFunName"), Getattr(udata, "javaFunSignature"), Getattr(udata, "nativeFunString"));
+
+                String *javaFunSignature = NewStringf("regex_replace(string(\"%s\"),e,p).c_str()", Getattr(udata, "javaFunSignature"));
+                Printf(dmethod_data, "{\"%s\",%s,%s}", Getattr(udata, "javaFunName"), javaFunSignature, Getattr(udata, "nativeFunString"));
+                Delete(javaFunSignature);
                 ++n_methods;
 
                 udata_iter = Next(udata_iter);
@@ -3908,6 +3944,7 @@ public:
 
             Printf(dmethod_data, "}");
         }
+        Replaceall(dmethod_data, package_path, "@p@");
         Printv(w->code, dmethod_data, NIL);
 
         Printf(w->code, "\nint methodsCount = sizeof(jniFuncEntryMethods) / sizeof(jniFuncEntryMethods[0]);\n");
@@ -5387,13 +5424,30 @@ public:
       Append(javaFunSignature, javaret_desc);
 
       String *nativeFunString = NewString("");
-      Append(nativeFunString, "(void *) ");
-      Append(nativeFunString, wname);
+      Append(nativeFunString, "(void *)");
+      Append(nativeFunString, getShrinkWname(wname).c_str());
 
       Setattr(new_udata, "javaFunName", Copy(javafun_name));
       Setattr(new_udata, "javaFunSignature", javaFunSignature);
       Setattr(new_udata, "nativeFunString", nativeFunString);
   }
+
+    std::string setShrinkWname(String *wname) {
+        std::string wnamestring(Char(wname));
+        std::string fname = std::string("f") + std::to_string(jni_register_shrink_wname_index);
+        jni_register_shrink_wname_index++;
+        jni_register_shrink_wname[wnamestring] = fname;
+        return fname;
+    }
+
+    std::string getShrinkWname(String *wname) {
+        std::string wnamestring(Char(wname));
+        if (jni_register_shrink_wname.find(wnamestring) != jni_register_shrink_wname.end()) {
+            return jni_register_shrink_wname[wnamestring];
+        } else {
+            return std::string();
+        }
+    }
 
 };				/* class JAVA */
 
