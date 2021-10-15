@@ -935,7 +935,7 @@ public:
     Delete(jniname);
 
       //Xuanyi修改点
-      Swig_director_parms_fixup(l);
+//      Swig_director_parms_fixup(l);
       //Xuanyi修改点
 
     /* Attach the non-standard typemaps to the parameter list. */
@@ -4222,6 +4222,9 @@ public:
     bool ignored_method = GetFlag(n, "feature:ignore") ? true : false;
     String *qualified_classname = getProxyName(getClassName());
 
+    if(Cmp(c_classname, "SwigDirector_INLEMonitor_onEvent")==0){
+        int c = 1;
+    }
       Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "classDirectorMethod-> nodeType=%s, parentNodeType=%s, name=%s, parentName=%s, symname=%s, value=%s, decl=%s\n", nodeType, parentNodeType, name, parentName, symname, value, decl);
       Delete(nodeType);
       Delete(parentNodeType);
