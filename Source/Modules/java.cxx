@@ -700,6 +700,9 @@ public:
 
     // Output a Java type wrapper class for each SWIG type
     for (Iterator swig_type = First(swig_types_hash); swig_type.key; swig_type = Next(swig_type)) {
+        if(Cmp(swig_type.key, "SWIGTYPE_p_INLEMonitor") == 0){
+            int a = 1;
+        }
       emitTypeWrapperClass(swig_type.key, swig_type.item);
     }
 
@@ -3432,14 +3435,14 @@ public:
    *   substitution_performed - flag indicating if a substitution was performed
    * ----------------------------------------------------------------------------- */
 
-  bool substituteClassname(SwigType *pt, String *tm, bool jnidescriptor = false) {
+  bool substituteClassname(SwigType *pt, String *tm, bool jnidescriptor = false, bool skipGenTypeWrapperClass = false) {
     bool substitution_performed = false;
     SwigType *type = Copy(SwigType_typedef_resolve_all(pt));
     SwigType *strippedtype = SwigType_strip_qualifiers(type);
 
     if (Strstr(tm, "$javaclassname")) {
       SwigType *classnametype = Copy(strippedtype);
-      substituteClassnameSpecialVariable(classnametype, tm, "$javaclassname", jnidescriptor);
+      substituteClassnameSpecialVariable(classnametype, tm, "$javaclassname", jnidescriptor, skipGenTypeWrapperClass);
       substitution_performed = true;
       Delete(classnametype);
     }
@@ -3447,7 +3450,7 @@ public:
       SwigType *classnametype = Copy(strippedtype);
       Delete(SwigType_pop(classnametype));
       if (Len(classnametype) > 0) {
-	substituteClassnameSpecialVariable(classnametype, tm, "$*javaclassname", jnidescriptor);
+	substituteClassnameSpecialVariable(classnametype, tm, "$*javaclassname", jnidescriptor, skipGenTypeWrapperClass);
 	substitution_performed = true;
       }
       Delete(classnametype);
@@ -3455,7 +3458,7 @@ public:
     if (Strstr(tm, "$&javaclassname")) {
       SwigType *classnametype = Copy(strippedtype);
       SwigType_add_pointer(classnametype);
-      substituteClassnameSpecialVariable(classnametype, tm, "$&javaclassname", jnidescriptor);
+      substituteClassnameSpecialVariable(classnametype, tm, "$&javaclassname", jnidescriptor, skipGenTypeWrapperClass);
       substitution_performed = true;
       Delete(classnametype);
     }
@@ -3514,7 +3517,7 @@ public:
    * substituteClassnameSpecialVariable()
    * ----------------------------------------------------------------------------- */
 
-  void substituteClassnameSpecialVariable(SwigType *classnametype, String *tm, const char *classnamespecialvariable, bool jnidescriptor) {
+  void substituteClassnameSpecialVariable(SwigType *classnametype, String *tm, const char *classnamespecialvariable, bool jnidescriptor, bool skipGenTypeWrapperClass = false) {
     String *replacementname;
 
     if (SwigType_isenum(classnametype)) {
@@ -3529,7 +3532,14 @@ public:
 	  // An unknown enum - one that has not been parsed (neither a C enum forward reference nor a definition) or an ignored enum
 	  replacementname = NewStringf("SWIGTYPE%s", SwigType_manglestr(classnametype));
 	  Replace(replacementname, "enum ", "", DOH_REPLACE_ANY);
-	  Setattr(swig_types_hash, replacementname, classnametype);
+	  //Xuanyi修改点
+        if(Cmp(replacementname, "SWIGTYPE_p_SwigDirector_INLEMonitor_onEvent") == 0){
+            int a = 1;
+        }
+        if(!skipGenTypeWrapperClass) {
+            Setattr(swig_types_hash, replacementname, classnametype);
+        }
+        //Xuanyi修改点
 	}
       }
     } else {
@@ -3541,7 +3551,14 @@ public:
 	replacementname = NewStringf("SWIGTYPE%s", SwigType_manglestr(classnametype));
 
 	// Add to hash table so that the type wrapper classes can be created later
-	Setattr(swig_types_hash, replacementname, classnametype);
+          //Xuanyi修改点
+          if(Cmp(replacementname, "SWIGTYPE_p_SwigDirector_INLEMonitor_onEvent") == 0){
+              int a = 1;
+          }
+          if(!skipGenTypeWrapperClass) {
+              Setattr(swig_types_hash, replacementname, classnametype);
+          }
+          //Xuanyi修改点
       }
     }
     if (jnidescriptor)
@@ -4145,11 +4162,11 @@ public:
    * 
    * --------------------------------------------------------------- */
 
-  String *canonicalizeJNIDescriptor(String *descriptor_in, Parm *p) {
+  String *canonicalizeJNIDescriptor(String *descriptor_in, Parm *p, bool skipGenTypeWrapperClass = false) {
     SwigType *type = Getattr(p, "type");
     String *descriptor_out = Copy(descriptor_in);
 
-    substituteClassname(type, descriptor_out, true);
+    substituteClassname(type, descriptor_out, true, skipGenTypeWrapperClass);
     substitutePackagePath(descriptor_out, p);
 
     return descriptor_out;
@@ -5307,7 +5324,7 @@ public:
                           Parm *pgc_tp = NewParm(pgc_parameter, Getattr(p, "name"), n);
                           String *gpc_desc_tm = Swig_typemap_lookup("directorin", pgc_tp, "", 0);
                           String *gpc_jdesc = Getattr(pgc_tp, "tmap:directorin:descriptor");
-                          String *gpc_jni_canon = canonicalizeJNIDescriptor(gpc_jdesc, pgc_tp);
+                          String *gpc_jni_canon = canonicalizeJNIDescriptor(gpc_jdesc, pgc_tp, true);
                           Append(jnidesc, gpc_jni_canon);
 //                          Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "FunctionWrapper->obtainJniParamDesc->name=%s, jnidesc=%s\n", wname, jnidesc);
                           Delete(gpc_jni_canon);
