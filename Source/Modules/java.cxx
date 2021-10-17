@@ -3933,7 +3933,7 @@ public:
         Printf(w->def, "SWIGHIDE int JNICALL swigRegisterNatives(JNIEnv *jenv) {");
         Printf(w->code, "using namespace std;\n");
         Printf(w->code, "regex e(\"@p@\");\n");
-        Printf(w->code, "const char *p = \"%s\"\n", package_path);
+        Printf(w->code, "const char *p = \"%s\";\n", package_path);
         String *jniname = makeValidJniName(imclass_name);
         Printf(w->code, "static const char *jniFunEntryClassName = \"%s/%s\";\n", package_path, jniname);
         Delete(jniname);
