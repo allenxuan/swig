@@ -3533,9 +3533,6 @@ public:
 	  replacementname = NewStringf("SWIGTYPE%s", SwigType_manglestr(classnametype));
 	  Replace(replacementname, "enum ", "", DOH_REPLACE_ANY);
 	  //Xuanyi修改点
-        if(Cmp(replacementname, "SWIGTYPE_p_SwigDirector_INLEMonitor_onEvent") == 0){
-            int a = 1;
-        }
         if(!skipGenTypeWrapperClass) {
             Setattr(swig_types_hash, replacementname, classnametype);
         }
@@ -3552,9 +3549,6 @@ public:
 
 	// Add to hash table so that the type wrapper classes can be created later
           //Xuanyi修改点
-          if(Cmp(replacementname, "SWIGTYPE_p_SwigDirector_INLEMonitor_onEvent") == 0){
-              int a = 1;
-          }
           if(!skipGenTypeWrapperClass) {
               Setattr(swig_types_hash, replacementname, classnametype);
           }
@@ -4181,12 +4175,6 @@ public:
    * --------------------------------------------------------------- */
 
   int classDirectorMethod(Node *n, Node *parent, String *super) {
-      SwigType *nodeType = Getattr(n, "type");
-      SwigType *parentNodeType = Getattr(parent, "type");
-      SwigType *parentName = Getattr(parent, "name");
-
-
-
     String *c_classname = Getattr(parent, "name");
     String *name = Getattr(n, "name");
     String *symname = Getattr(n, "sym:name");
@@ -4222,13 +4210,7 @@ public:
     bool ignored_method = GetFlag(n, "feature:ignore") ? true : false;
     String *qualified_classname = getProxyName(getClassName());
 
-    if(Cmp(c_classname, "SwigDirector_INLEMonitor_onEvent")==0){
-        int c = 1;
-    }
-      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "classDirectorMethod-> nodeType=%s, parentNodeType=%s, name=%s, parentName=%s, symname=%s, value=%s, decl=%s\n", nodeType, parentNodeType, name, parentName, symname, value, decl);
-      Delete(nodeType);
-      Delete(parentNodeType);
-      Delete(parentName);
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "classDirectorMethod-> nodeType=%s, parentNodeType=%s, name=%s, parentName=%s, symname=%s, value=%s, decl=%s\n", Getattr(n, "type"), Getattr(parent, "type"), name,  Getattr(parent, "name"), symname, value, decl);
 
     // Kludge Alert: functionWrapper sets sym:overload properly, but it
     // isn't at this point, so we have to manufacture it ourselves. At least
