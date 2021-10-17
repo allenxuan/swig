@@ -25,10 +25,6 @@
 typedef DOH UpcallData;
 
 class JAVA:public Language {
-  SwigString* swigStringForDebug; //for debug
-//  SwigString *debugString = (SwigString *) (((DohBase *) wname)->data);
-  std::vector<SwigJniSignatureStruct> jniSignatures;
-
   static const char *usage;
   const String *empty_string;
   const String *public_string;
@@ -57,6 +53,7 @@ class JAVA:public Language {
   bool member_func_flag;	// flag set when wrapping a member function
   bool doxygen;			//flag for converting found doxygen to javadoc
   bool comment_creation_chatter; //flag for getting information about where comments were created in java.cxx
+  bool jni_register_flag; //flag for jni dynamic register.
   
   String *imclass_name;		// intermediary class name
   String *module_class_name;	// module class name
@@ -106,8 +103,12 @@ class JAVA:public Language {
   List *jni_register_methods_seq;
   int n_jni_register_methods;
   std::unordered_map<std::string, std::string> jni_register_shrink_wname;
-  int jni_register_shrink_wname_index = 0;
+  int jni_register_shrink_wname_index;
 
+  //SwigString debug stuff
+  SwigString* swigStringForDebug; //for debug
+//  SwigString *debugString = (SwigString *) (((DohBase *) wname)->data);
+//    std::vector<SwigJniSignatureStruct> jniSignatures;
 
 public:
 
@@ -140,6 +141,7 @@ public:
       member_func_flag(false),
       doxygen(false),
       comment_creation_chatter(false),
+      jni_register_flag(false),
       imclass_name(NULL),
       module_class_name(NULL),
       constants_interface_name(NULL),
@@ -181,12 +183,14 @@ public:
       nesting_depth(0),
       jni_register_methods_seq(NULL),
       n_jni_register_methods(0),
-      jni_register_shrink_wname_index(0){
+      jni_register_shrink_wname_index(0),
+      swigStringForDebug(NULL){
     /* for now, multiple inheritance in directors is disabled, this
        should be easy to implement though */
     director_multiple_inheritance = 0;
     director_language = 1;
     jni_register_shrink_wname.clear();
+    (void) swigStringForDebug; //suppress unused warning.
   }
   
   ~JAVA() {
@@ -337,6 +341,9 @@ public:
 	  Printf(stderr, "Deprecated command line option: -jnicpp. C++ JNI calling convention now used when -c++ specified.\n");
 	} else if (strcmp(argv[i], "-help") == 0) {
 	  Printf(stdout, "%s\n", usage);
+	} else if (strcmp(argv[i], "-jniregister") == 0) {
+        Swig_mark_arg(i);
+	    jni_register_flag = true;
 	}
       }
     }
@@ -515,11 +522,18 @@ public:
       Replaceall(package_path, ".", "/");
     }
     String *jniname = makeValidJniName(imclass_name);
-    //Xuanyi修改点: JNI方法名去除Java_包名_模块名前缀
-//    Printf(wrapper_name, "Java_%s%s_%%f", jnipackage, jniname);
-    //jnipackage类似"com_bytedance_ies_nle_editor_1jni_"
-    //jniname类似"NLEEditorJniJNI"
-    Printf(wrapper_name, "%%f"); //%f最终会被具体的方法名替代，如NLETrack_1addSlot
+
+    if (!jni_register_flag) {
+        Printf(wrapper_name, "Java_%s%s_%%f", jnipackage, jniname);
+    } else {
+        //JNI register specific logic start
+
+        //remove Java_package_moduleName prefix of "wrapper name formatting"
+        Printf(wrapper_name, "%%f"); //this %f will eventually be replaced by specific method names.
+
+        //JNI register specific logic end
+    }
+
     Delete(jniname);
 
     Swig_name_register("wrapper", Char(wrapper_name));
@@ -587,7 +601,9 @@ public:
 
       if (n_dmethods > 0) {
 	Putc('\n', f_im);
+    //JNI register specific logic start
     Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "获取swig_module_init Java入口函数\n", "");
+    //JNI register specific logic end
 	Printf(f_im, "  private final static native void swig_module_init();\n");
 	Printf(f_im, "  static {\n");
 	Printf(f_im, "    swig_module_init();\n");
@@ -692,7 +708,11 @@ public:
       Printv(f_wrappers, upcasts_code, NIL);
 
     emitDirectorUpcalls();
-    emitRegisterNatives();
+    if (jni_register_flag) {
+        //JNI register specific logic start
+        emitRegisterNatives();
+        //JNI register specific logic end
+    }
 
     Printf(f_wrappers, "#ifdef __cplusplus\n");
     Printf(f_wrappers, "}\n");
@@ -700,9 +720,6 @@ public:
 
     // Output a Java type wrapper class for each SWIG type
     for (Iterator swig_type = First(swig_types_hash); swig_type.key; swig_type = Next(swig_type)) {
-        if(Cmp(swig_type.key, "SWIGTYPE_p_INLEMonitor") == 0){
-            int a = 1;
-        }
       emitTypeWrapperClass(swig_type.key, swig_type.item);
     }
 
@@ -934,9 +951,11 @@ public:
 
     Delete(jniname);
 
-      //Xuanyi修改点
-//      Swig_director_parms_fixup(l);
-      //Xuanyi修改点
+      //JNI register specific logic start
+//      if (jni_register_flag) {
+//          Swig_director_parms_fixup(l);
+//      }
+      //JNI register specific logic end
 
     /* Attach the non-standard typemaps to the parameter list. */
     Swig_typemap_attach_parms("jni", l, f);
@@ -960,18 +979,21 @@ public:
     if (!is_void_return)
       Wrapper_add_localv(f, "jresult", c_return_type, "jresult = 0", NIL);
 
-    //Xuanyi修改点
-    std::string wname_shrink = setShrinkWname(wname);
-//    Printv(f->def, "SWIGEXPORT ", c_return_type, " JNICALL ", wname, "(JNIEnv *jenv, jclass jcls", NIL);
-    Printv(f->def, "SWIGHIDE ", c_return_type, " ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls", NIL);
-    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理一般JNI方法,c_return_type=%s,wname=%s, wname_shrink=%s\n", c_return_type, wname, wname_shrink.c_str());
-    //Xuanyi修改点
+    //JNI register specific logic start
+    String *javaret_desc = NULL;
+    String *javaparam_desc = NULL;
+    //JNI register specific logic end
 
-      //Xuanyi修改点
-      String *javaret_desc = NULL;
-      String* javaparam_desc = NULL;
-      javaret_desc = obtainJniRetDesc(n, wname);
-      //Xuanyi修改点
+    if (!jni_register_flag) {
+        Printv(f->def, "SWIGEXPORT ", c_return_type, " JNICALL ", wname, "(JNIEnv *jenv, jclass jcls", NIL);
+    }else {
+        //JNI register specific logic start
+        std::string wname_shrink = setShrinkWname(wname);
+        Printv(f->def, "SWIGHIDE ", c_return_type, " ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls", NIL);
+        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理一般JNI方法,c_return_type=%s,wname=%s, wname_shrink=%s\n", c_return_type, wname, wname_shrink.c_str());
+        javaret_desc = obtainJniRetDesc(n, wname);
+        //JNI register specific logic end
+    }
 
     // Usually these function parameters are unused - The code below ensures
     // that compilers do not issue such a warning if configured to do so.
@@ -1000,11 +1022,9 @@ public:
     }
 
     Printf(imclass_class_code, "  public final static native %s %s(", im_return_type, overloaded_name);
+    //JNI register specific logic start
     Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "一般JNI方法对应的java方法,im_return_type=%s, overloaded_name=%s\n", im_return_type, overloaded_name);
-
-      if(Cmp("NLETrack_1removeVideoEffect", wname) == 0){
-          int bb = 2;
-      }
+    //JNI register specific logic end
 
     num_arguments = emit_num_arguments(l);
 
@@ -1078,13 +1098,15 @@ public:
       Delete(arg);
     }
 
-    //Xuanyi修改点
-    javaparam_desc =  obtainJniParamDesc(n, wname, l, is_destructor);
-    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "wname=%s, 获取Java函数签名, 返回值部分javaret_desc=%s, 函数签名参数部分javaparam_desc_desc=%s\n", wname, javaret_desc, javaparam_desc);
-    addJniRegisterSignature(overloaded_name, javaret_desc, javaparam_desc, wname);
-    Delete(javaret_desc);
-    Delete(javaparam_desc);
-    //Xuanyi修改点
+    if (jni_register_flag) {
+        //JNI register specific logic start
+        javaparam_desc =  obtainJniParamDesc(n, wname, l, is_destructor);
+        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "wname=%s, 获取Java函数签名, 返回值部分javaret_desc=%s, 函数签名参数部分javaparam_desc_desc=%s\n", wname, javaret_desc, javaparam_desc);
+        addJniRegisterSignature(overloaded_name, javaret_desc, javaparam_desc, wname);
+        Delete(javaret_desc);
+        Delete(javaparam_desc);
+        //JNI register specific logic end
+    }
 
     Printv(f->code, nondir_args, NIL);
     Delete(nondir_args);
@@ -1967,8 +1989,10 @@ public:
     String *classname = SwigType_namestr(c_classname);
     String *baseclassname = SwigType_namestr(c_baseclassname);
 
-    //Xuanyi修改点
-    std::string wname_shrink = setShrinkWname(wname);
+    //JNI register specific logic start
+    std::string wname_shrink;
+    //JNI register specific logic end
+
     if (smart) {
       String *smartnamestr = SwigType_namestr(smart);
       String *bsmartnamestr = SwigType_namestr(smart);
@@ -1978,42 +2002,77 @@ public:
       SwigType *rbaseclassname = SwigType_typedef_resolve_all(baseclassname);
       Replaceall(bsmartnamestr, rclassname, rbaseclassname);
 
-
+      if (!jni_register_flag) {
       Printv(upcasts_code,
-//	  "SWIGEXPORT jlong JNICALL ", wname, "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
-	  "SWIGHIDE jlong ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
-	  "    jlong baseptr = 0;\n"
-	  "    ", smartnamestr, " *argp1;\n"
-	  "    (void)jenv;\n"
-	  "    (void)jcls;\n"
-	  "    argp1 = *(", smartnamestr, " **)&jarg1;\n"
-	  "    *(", bsmartnamestr, " **)&baseptr = argp1 ? new ", bsmartnamestr, "(*argp1) : 0;\n"
-	  "    return baseptr;\n"
-	  "}\n", "\n", NIL);
+        "SWIGEXPORT jlong JNICALL ", wname, "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+	    "    jlong baseptr = 0;\n"
+	    "    ", smartnamestr, " *argp1;\n"
+	    "    (void)jenv;\n"
+	    "    (void)jcls;\n"
+	    "    argp1 = *(", smartnamestr, " **)&jarg1;\n"
+	    "    *(", bsmartnamestr, " **)&baseptr = argp1 ? new ", bsmartnamestr, "(*argp1) : 0;\n"
+	    "    return baseptr;\n"
+	    "}\n", "\n", NIL);
+      } else {
+      //JNI register specific logic start
+      Printv(upcasts_code,
+        "SWIGHIDE jlong ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+	    "    jlong baseptr = 0;\n"
+	    "    ", smartnamestr, " *argp1;\n"
+	    "    (void)jenv;\n"
+	    "    (void)jcls;\n"
+	    "    argp1 = *(", smartnamestr, " **)&jarg1;\n"
+	    "    *(", bsmartnamestr, " **)&baseptr = argp1 ? new ", bsmartnamestr, "(*argp1) : 0;\n"
+	    "    return baseptr;\n"
+	    "}\n", "\n", NIL);
+      //JNI register specific logic end
+      }
+
+      //JNI register specific logic start
       Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理智能指针类型转换JNI方法\n", "");
+      //JNI register specific logic end
 
       Delete(rbaseclassname);
       Delete(rclassname);
       Delete(bsmartnamestr);
       Delete(smartnamestr);
     } else {
+      if (!jni_register_flag) {
       Printv(upcasts_code,
-//	  "SWIGEXPORT jlong JNICALL ", wname, "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
-	  "SWIGHIDE jlong ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
-	  "    jlong baseptr = 0;\n"
-	  "    (void)jenv;\n"
-	  "    (void)jcls;\n"
-	  "    *(", baseclassname, " **)&baseptr = *(", classname, " **)&jarg1;\n"
-	  "    return baseptr;\n"
-	  "}\n", "\n", NIL);
+        "SWIGEXPORT jlong JNICALL ", wname, "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+	    "    jlong baseptr = 0;\n"
+	    "    (void)jenv;\n"
+	    "    (void)jcls;\n"
+	    "    *(", baseclassname, " **)&baseptr = *(", classname, " **)&jarg1;\n"
+	    "    return baseptr;\n"
+	    "}\n", "\n", NIL);
+      } else {
+      //JNI register specific logic start
+      Printv(upcasts_code,
+        "SWIGHIDE jlong ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+	    "    jlong baseptr = 0;\n"
+	    "    (void)jenv;\n"
+	    "    (void)jcls;\n"
+	    "    *(", baseclassname, " **)&baseptr = *(", classname, " **)&jarg1;\n"
+	    "    return baseptr;\n"
+	    "}\n", "\n", NIL);
+      //JNI register specific logic end
+      }
+
+      //JNI register specific logic start
       Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理类型转换JNI方法\n", "");
+      //JNI register specific logic end
     }
-    String *javaret_desc = NewString("J");
-    String *javaparam_desc = NewString("J");
-    addJniRegisterSignature(upcast_method_name, javaret_desc, javaparam_desc, wname);
-    Delete(javaret_desc);
-    Delete(javaparam_desc);
-    //Xuanyi修改点
+
+    if (jni_register_flag) {
+        //JNI register specific logic start
+        String *javaret_desc = NewString("J");
+        String *javaparam_desc = NewString("J");
+        addJniRegisterSignature(upcast_method_name, javaret_desc, javaparam_desc, wname);
+        Delete(javaret_desc);
+        Delete(javaparam_desc);
+        //JNI register specific logic end
+    }
 
     Delete(baseclassname);
     Delete(classname);
@@ -3532,11 +3591,11 @@ public:
 	  // An unknown enum - one that has not been parsed (neither a C enum forward reference nor a definition) or an ignored enum
 	  replacementname = NewStringf("SWIGTYPE%s", SwigType_manglestr(classnametype));
 	  Replace(replacementname, "enum ", "", DOH_REPLACE_ANY);
-	  //Xuanyi修改点
-        if(!skipGenTypeWrapperClass) {
-            Setattr(swig_types_hash, replacementname, classnametype);
-        }
-        //Xuanyi修改点
+      //JNI register specific logic start
+      if(!skipGenTypeWrapperClass) {
+          Setattr(swig_types_hash, replacementname, classnametype);
+      }
+      //JNI register specific logic end
 	}
       }
     } else {
@@ -3548,11 +3607,11 @@ public:
 	replacementname = NewStringf("SWIGTYPE%s", SwigType_manglestr(classnametype));
 
 	// Add to hash table so that the type wrapper classes can be created later
-          //Xuanyi修改点
-          if(!skipGenTypeWrapperClass) {
-              Setattr(swig_types_hash, replacementname, classnametype);
-          }
-          //Xuanyi修改点
+    //JNI register specific logic start
+     if(!skipGenTypeWrapperClass) {
+         Setattr(swig_types_hash, replacementname, classnametype);
+     }
+    //JNI register specific logic end
       }
     }
     if (jnidescriptor)
@@ -3889,7 +3948,9 @@ public:
       Printf(f_runtime, "}\n");
 
       Printf(w->def, "SWIGEXPORT void JNICALL Java_%s%s_%s(JNIEnv *jenv, jclass jcls) {", jnipackage, jni_imclass_name, swig_module_init_jni);
+      //JNI register specific logic start
       Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "获取Director回调的Java函数签名module_init\n", "");
+      //JNI register specific logic end
       Printf(w->code, "static struct {\n");
       Printf(w->code, "  const char *method;\n");
       Printf(w->code, "  const char *signature;\n");
@@ -4012,7 +4073,9 @@ public:
     Printf(code_wrap->def,
 	   "SWIGEXPORT void JNICALL Java_%s%s_%s(JNIEnv *jenv, jclass jcls, jobject jself, jlong objarg, jboolean jswig_mem_own, "
 	   "jboolean jweak_global) {\n", jnipackage, jni_imclass_name, swig_director_connect_jni);
+    //JNI register specific logic start
     Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理director_connect方法\n", "");
+    //JNI register specific logic end
 
     if (smartptr) {
       Printf(code_wrap->code, "  %s *obj = *((%s **)&objarg);\n", smartptr, smartptr);
@@ -4047,7 +4110,9 @@ public:
     Printf(code_wrap->def,
 	   "SWIGEXPORT void JNICALL Java_%s%s_%s(JNIEnv *jenv, jclass jcls, jobject jself, jlong objarg, jboolean jtake_or_release) {\n",
 	   jnipackage, jni_imclass_name, changeown_jnimethod_name);
+    //JNI register specific logic start
     Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理change_ownership方法\n", "");
+    //JNI register specific logic end
 
     if (Len(smartptr)) {
         Printf(code_wrap->code, "  %s *obj = *((%s **)&objarg);\n", smartptr, smartptr);
@@ -4210,7 +4275,9 @@ public:
     bool ignored_method = GetFlag(n, "feature:ignore") ? true : false;
     String *qualified_classname = getProxyName(getClassName());
 
+    //JNI register specific logic start
     Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "classDirectorMethod-> nodeType=%s, parentNodeType=%s, name=%s, parentName=%s, symname=%s, value=%s, decl=%s\n", Getattr(n, "type"), Getattr(parent, "type"), name,  Getattr(parent, "name"), symname, value, decl);
+    //JNI register specific logic end
 
     // Kludge Alert: functionWrapper sets sym:overload properly, but it
     // isn't at this point, so we have to manufacture it ourselves. At least
@@ -4314,16 +4381,23 @@ public:
       if (Swig_typemap_lookup("directorin", tp, "", 0)
 	  && (jdesc = Getattr(tp, "tmap:directorin:descriptor"))) {
 
+    //JNI register specific logic start
     Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s->\n", name);
+    //JNI register specific logic end
+
 	// Objects marshalled passing a Java class across JNI boundary use jobject - the nouse flag indicates this
 	// We need the specific Java class name instead of the generic 'Ljava/lang/Object;'
 	if (GetFlag(tp, "tmap:directorin:nouse")) {
         jdesc = cdesc;
+        //JNI register specific logic start
         Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> apply cdesc=%s\n", name, cdesc);
+        //JNI register specific logic end
     }
 	String *jnidesc_canon = canonicalizeJNIDescriptor(jdesc, tp);
 	Append(jniret_desc, jnidesc_canon);
+    //JNI register specific logic start
     Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jniret_des=%s\n", name, jniret_desc);
+    //JNI register specific logic end
 	Delete(jnidesc_canon);
       } else {
 	Swig_warning(WARN_TYPEMAP_DIRECTORIN_UNDEF, input_file, line_number,
@@ -4402,7 +4476,9 @@ public:
 	&& (jdesc = Getattr(tp, "tmap:directorin:descriptor"))) {
       String *jni_canon = canonicalizeJNIDescriptor(jdesc, tp);
       Append(jnidesc, jni_canon);
-        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc=%s\n", name, jnidesc);
+      //JNI register specific logic start
+      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc=%s\n", name, jnidesc);
+      //JNI register specific logic end
       Delete(jni_canon);
       Delete(tm);
     } else {
@@ -4420,7 +4496,9 @@ public:
       while (checkAttribute(p, "tmap:directorin:numinputs", "0")) {
 	p = Getattr(p, "tmap:directorin:next");
       }
+      //JNI register specific logic start
       Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc循环\n", name);
+      //JNI register specific logic end
       SwigType *pt = Getattr(p, "type");
       String *ln = makeParameterName(n, p, i, false);
       String *c_param_type = NULL;
@@ -4456,11 +4534,15 @@ public:
 	  // the nouse flag indicates this. We need the specific Java class name instead of the generic 'Ljava/lang/Object;'
 	  if (GetFlag(tp, "tmap:directorin:nouse")) {
           jdesc = cdesc;
+          //JNI register specific logic start
           Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc循环，apply cdesc=%s\n", name, cdesc);
+          //JNI register specific logic end
       }
 	  String *jni_canon = canonicalizeJNIDescriptor(jdesc, tp);
 	  Append(jnidesc, jni_canon);
-        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc=%s\n", name, jnidesc);
+      //JNI register specific logic start
+      Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "upcall director name=%s-> jnidesc=%s\n", name, jnidesc);
+      //JNI register specific logic end
 	  Delete(jni_canon);
 
 	  Setattr(p, "emit:directorinput", arg);
@@ -5150,6 +5232,7 @@ public:
    *--------------------------------------------------------------------*/
 
   String *obtainJniRetDesc(Node * n, String *wname){
+      (void) wname; //suppress unused warning
       SwigType *returntype = Getattr(n, "type");
       SwigType *c_ret_type = NULL;
       String *jniret_desc = NewString("");
@@ -5235,9 +5318,6 @@ public:
       String *tm;
 
 //      String* haha = NewString("VecNLEPointSPtrConst_1doAdd_1_1SWIG_10");
-      if(Cmp("NLETrack_1removeVideoEffect", wname) == 0){
-          int bb = 2;
-      }
 
       int num_arguments = 0;
       num_arguments = emit_num_arguments(l);
@@ -5308,6 +5388,7 @@ public:
                       if (pgc_parameter) {
                           Parm *pgc_tp = NewParm(pgc_parameter, Getattr(p, "name"), n);
                           String *gpc_desc_tm = Swig_typemap_lookup("directorin", pgc_tp, "", 0);
+                          (void) gpc_desc_tm; //suppress unused warning.
                           String *gpc_jdesc = Getattr(pgc_tp, "tmap:directorin:descriptor");
                           String *gpc_jni_canon = canonicalizeJNIDescriptor(gpc_jdesc, pgc_tp, true);
                           Append(jnidesc, gpc_jni_canon);
