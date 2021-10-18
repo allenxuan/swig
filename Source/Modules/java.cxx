@@ -4025,7 +4025,7 @@ public:
                 Putc('\n', dmethod_data);
             }
 
-            Printf(dmethod_data, "}");
+            Printf(dmethod_data, "};");
         }
         Replaceall(dmethod_data, package_path, "@p@");
         Printv(w->code, dmethod_data, NIL);
