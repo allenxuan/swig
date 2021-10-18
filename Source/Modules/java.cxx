@@ -1990,7 +1990,7 @@ public:
     String *baseclassname = SwigType_namestr(c_baseclassname);
 
     //JNI register specific logic start
-    std::string wname_shrink;
+    std::string wname_shrink = setShrinkWname(wname);
     //JNI register specific logic end
 
     if (smart) {
@@ -4011,8 +4011,10 @@ public:
             while (udata_iter.item) {
                 UpcallData *udata = udata_iter.item;
 
-                String *javaFunSignature = NewStringf("regex_replace(string(\"%s\"),e,p).c_str()", Getattr(udata, "javaFunSignature"));
+                String* rawJavaFunSignature = Copy(Getattr(udata, "javaFunSignature"));
+                String *javaFunSignature = NewStringf("regex_replace(string(\"%s\"),e,p).c_str()", rawJavaFunSignature);
                 Printf(dmethod_data, "{\"%s\",%s,%s}", Getattr(udata, "javaFunName"), javaFunSignature, Getattr(udata, "nativeFunString"));
+                Delete(rawJavaFunSignature);
                 Delete(javaFunSignature);
                 ++n_methods;
 
@@ -5537,10 +5539,14 @@ public:
 
     std::string setShrinkWname(String *wname) {
         std::string wnamestring(Char(wname));
-        std::string fname = std::string("f") + std::to_string(jni_register_shrink_wname_index);
-        jni_register_shrink_wname_index++;
-        jni_register_shrink_wname[wnamestring] = fname;
-        return fname;
+        if (jni_register_shrink_wname.find(wnamestring) != jni_register_shrink_wname.end()) {
+            return jni_register_shrink_wname[wnamestring];
+        } else {
+            std::string fname = std::string("f") + std::to_string(jni_register_shrink_wname_index);
+            jni_register_shrink_wname_index++;
+            jni_register_shrink_wname[wnamestring] = fname;
+            return fname;
+        }
     }
 
     std::string getShrinkWname(String *wname) {
