@@ -54,7 +54,8 @@ class JAVA:public Language {
   bool doxygen;			//flag for converting found doxygen to javadoc
   bool comment_creation_chatter; //flag for getting information about where comments were created in java.cxx
   bool jni_register_flag; //flag for jni dynamic register.
-  
+  bool jni_confusion_flag; //flag for jni dynamic register.
+
   String *imclass_name;		// intermediary class name
   String *module_class_name;	// module class name
   String *constants_interface_name;	// constants interface name
@@ -108,7 +109,6 @@ class JAVA:public Language {
   //SwigString debug stuff
   SwigString* swigStringForDebug; //for debug
 //  SwigString *debugString = (SwigString *) (((DohBase *) wname)->data);
-//    std::vector<SwigJniSignatureStruct> jniSignatures;
 
 public:
 
@@ -142,6 +142,7 @@ public:
       doxygen(false),
       comment_creation_chatter(false),
       jni_register_flag(false),
+      jni_confusion_flag(false),
       imclass_name(NULL),
       module_class_name(NULL),
       constants_interface_name(NULL),
@@ -344,7 +345,10 @@ public:
 	} else if (strcmp(argv[i], "-jniregister") == 0) {
         Swig_mark_arg(i);
 	    jni_register_flag = true;
-	}
+	} else if (strcmp(argv[i], "-jniconfusion") == 0) {
+        Swig_mark_arg(i);
+        jni_confusion_flag = true;
+    }
       }
     }
     
@@ -529,7 +533,7 @@ public:
         //JNI register specific logic start
 
         //remove Java_package_moduleName prefix of "wrapper name formatting"
-        Printf(wrapper_name, "%%f"); //this %f will eventually be replaced by specific method names.
+        Printf(wrapper_name, "_%%f"); //this %f will eventually be replaced by specific method names.
 
         //JNI register specific logic end
     }
@@ -984,12 +988,17 @@ public:
     String *javaparam_desc = NULL;
     //JNI register specific logic end
 
+    std::string wname_shrink;
     if (!jni_register_flag) {
         Printv(f->def, "SWIGEXPORT ", c_return_type, " JNICALL ", wname, "(JNIEnv *jenv, jclass jcls", NIL);
     }else {
         //JNI register specific logic start
-        std::string wname_shrink = setShrinkWname(wname);
-        Printv(f->def, "SWIGHIDE ", c_return_type, " ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls", NIL);
+        wname_shrink = setAndGet_ShrinkJavaOrJniFunName_WithJniFunName(wname);
+        if (!jni_confusion_flag) {
+            Printv(f->def, "SWIGHIDE ", c_return_type, " ", wname, "(JNIEnv *jenv, jclass jcls", NIL);
+        } else {
+            Printv(f->def, "SWIGHIDE ", c_return_type, " ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls", NIL);
+        }
         Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "处理一般JNI方法,c_return_type=%s,wname=%s, wname_shrink=%s\n", c_return_type, wname, wname_shrink.c_str());
         javaret_desc = obtainJniRetDesc(n, wname);
         //JNI register specific logic end
@@ -1021,13 +1030,27 @@ public:
       }
     }
 
-    Printf(imclass_class_code, "  public final static native %s %s(", im_return_type, overloaded_name);
-    //JNI register specific logic start
-    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "一般JNI方法对应的java方法,im_return_type=%s, overloaded_name=%s\n", im_return_type, overloaded_name);
-    //JNI register specific logic end
+    if(!jni_register_flag) {
+        Printf(imclass_class_code, "  public final static native %s %s(", im_return_type, overloaded_name);
+        Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "一般JNI方法对应的java方法,im_return_type=%s, overloaded_name=%s\n", im_return_type, overloaded_name);
+    } else {
+        //JNI register specific logic start
+        if (!jni_confusion_flag) {
+            Printf(imclass_class_code, "  public final static native %s %s(", im_return_type, overloaded_name);
+            Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "一般JNI方法对应的java方法,im_return_type=%s, overloaded_name=%s\n", im_return_type, overloaded_name);
+        } else {
+            String *old_overloaded_name = Copy(overloaded_name);
+            Delete(overloaded_name);
+            overloaded_name = NewString(setAndGet_ShrinkJavaOrJniFunName_WithJavaFunName(old_overloaded_name).c_str());
+            Printf(imclass_class_code, "  public final static native %s %s(", im_return_type, overloaded_name);
+            Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "一般JNI方法对应的java方法,im_return_type=%s, overloaded_name=%s, shrink_overloaded_name=%s\n", im_return_type, old_overloaded_name, overloaded_name);
+            Delete(old_overloaded_name);
+        }
+        //JNI register specific logic end
+    }
+
 
     num_arguments = emit_num_arguments(l);
-
     // Now walk the function parameter list and generate code to get arguments
     for (i = 0, p = l; i < num_arguments; i++) {
 
@@ -1097,7 +1120,6 @@ public:
       Delete(c_param_type);
       Delete(arg);
     }
-
     if (jni_register_flag) {
         //JNI register specific logic start
         javaparam_desc =  obtainJniParamDesc(n, wname, l, is_destructor);
@@ -1984,13 +2006,24 @@ public:
     String *jniname = makeValidJniName(upcast_method_name);
     String *wname = Swig_name_wrapper(jniname);
 
-    Printf(imclass_cppcasts_code, "  public final static native long %s(long jarg1);\n", upcast_method_name);
+    if (!jni_register_flag) {
+        Printf(imclass_cppcasts_code, "  public final static native long %s(long jarg1);\n", upcast_method_name);
+    } else {
+        //JNI register specific logic start
+        if (!jni_confusion_flag) {
+            Printf(imclass_cppcasts_code, "  public final static native long %s(long jarg1);\n", upcast_method_name);
+        } else {
+            Printf(imclass_cppcasts_code, "  public final static native long %s(long jarg1);\n",
+                   setAndGet_ShrinkJavaOrJniFunName_WithJniFunName(wname).c_str());
+        }
+        //JNI register specific logic end
+    }
 
     String *classname = SwigType_namestr(c_classname);
     String *baseclassname = SwigType_namestr(c_baseclassname);
 
     //JNI register specific logic start
-    std::string wname_shrink = setShrinkWname(wname);
+    std::string wname_shrink = setAndGet_ShrinkJavaOrJniFunName_WithJniFunName(wname);
     //JNI register specific logic end
 
     if (smart) {
@@ -2016,7 +2049,7 @@ public:
       } else {
       //JNI register specific logic start
       Printv(upcasts_code,
-        "SWIGHIDE jlong ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+        "SWIGHIDE jlong ", (!jni_confusion_flag) ? wname : wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
 	    "    jlong baseptr = 0;\n"
 	    "    ", smartnamestr, " *argp1;\n"
 	    "    (void)jenv;\n"
@@ -2049,7 +2082,7 @@ public:
       } else {
       //JNI register specific logic start
       Printv(upcasts_code,
-        "SWIGHIDE jlong ", wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
+        "SWIGHIDE jlong ", (!jni_confusion_flag) ? wname : wname_shrink.c_str(), "(JNIEnv *jenv, jclass jcls, jlong jarg1) {\n",
 	    "    jlong baseptr = 0;\n"
 	    "    (void)jenv;\n"
 	    "    (void)jcls;\n"
@@ -2068,7 +2101,8 @@ public:
         //JNI register specific logic start
         String *javaret_desc = NewString("J");
         String *javaparam_desc = NewString("J");
-        addJniRegisterSignature(upcast_method_name, javaret_desc, javaparam_desc, wname);
+//        addJniRegisterSignature(upcast_method_name, javaret_desc, javaparam_desc, wname);
+        addJniRegisterSignature((!jni_confusion_flag) ? upcast_method_name : NewString(setAndGet_ShrinkJavaOrJniFunName_WithJniFunName(wname).c_str()), javaret_desc, javaparam_desc, wname);
         Delete(javaret_desc);
         Delete(javaparam_desc);
         //JNI register specific logic end
@@ -2479,6 +2513,25 @@ public:
       Replaceall(proxy_class_constants_code, "$imclassname", full_imclass_name);
       Replaceall(interface_class_code, "$imclassname", full_imclass_name);
 
+      if (jni_register_flag) {
+          //JNI register specific logic start
+          if (jni_confusion_flag) {
+              String* constructorSmartUpcastString = NewStringf("%sSWIGSmartPtrUpcast", javaclazzname);
+              String* constructorUpcastString = NewStringf("%sSWIGUpcast", javaclazzname);
+              std::string constructorSmartUpcastStringShrink = get_ShrinkJavaOrJniFunName_WithJavaFunName(constructorSmartUpcastString);
+              std::string constructorUpcastStringShrink = get_ShrinkJavaOrJniFunName_WithJavaFunName(constructorUpcastString);
+              if(!constructorSmartUpcastStringShrink.empty()){
+                  Replaceall(proxy_class_def, constructorSmartUpcastString, constructorSmartUpcastStringShrink.c_str());
+              }
+              if(!constructorUpcastStringShrink.empty()){
+                  Replaceall(proxy_class_def, constructorUpcastString, constructorUpcastStringShrink.c_str());
+              }
+              Delete(constructorSmartUpcastString);
+              Delete(constructorUpcastString);
+          }
+          //JNI register specific logic end
+      }
+
       if (!has_outerclass)
 	Printv(f_proxy, proxy_class_def, proxy_class_code, NIL);
       else {
@@ -2825,8 +2878,31 @@ public:
 	String *ex_intermediary_function_name = Swig_name_member(getNSpace(), getClassPrefix(), ex_overloaded_name);
 
 	String *ex_imcall = Copy(imcall);
-	Replaceall(ex_imcall, "$imfuncname", ex_intermediary_function_name);
-	Replaceall(imcall, "$imfuncname", intermediary_function_name);
+    if (!jni_register_flag) {
+        Replaceall(ex_imcall, "$imfuncname", ex_intermediary_function_name);
+        Replaceall(imcall, "$imfuncname", intermediary_function_name);
+    }else{
+        //JNI register specific logic start
+        if (!jni_confusion_flag) {
+            Replaceall(ex_imcall, "$imfuncname", ex_intermediary_function_name);
+            Replaceall(imcall, "$imfuncname", intermediary_function_name);
+        } else {
+            std::string shrink_overloaded_name_ex_intermediary_function_name = setAndGet_ShrinkJavaOrJniFunName_WithJavaFunName(ex_intermediary_function_name);
+            if(shrink_overloaded_name_ex_intermediary_function_name.empty()){
+                Replaceall(ex_imcall, "$imfuncname", ex_intermediary_function_name);
+            } else{
+                Replaceall(ex_imcall, "$imfuncname", shrink_overloaded_name_ex_intermediary_function_name.c_str());
+            }
+
+            std::string shrink_overloaded_name_intermediary_function_name = setAndGet_ShrinkJavaOrJniFunName_WithJavaFunName(intermediary_function_name);
+            if(shrink_overloaded_name_intermediary_function_name.empty()){
+                Replaceall(imcall, "$imfuncname", intermediary_function_name);
+            } else{
+                Replaceall(imcall, "$imfuncname", shrink_overloaded_name_intermediary_function_name.c_str());
+            }
+        }
+        //JNI register specific logic end
+    }
 
 	String *excode = NewString("");
 	if (!Cmp(return_type, "void"))
@@ -2839,7 +2915,22 @@ public:
 	Delete(ex_overloaded_name);
 	Delete(excode);
       } else {
-	Replaceall(imcall, "$imfuncname", intermediary_function_name);
+          if (!jni_register_flag) {
+              Replaceall(imcall, "$imfuncname", intermediary_function_name);
+          }else{
+              //JNI register specific logic start
+              if (!jni_confusion_flag) {
+                  Replaceall(imcall, "$imfuncname", intermediary_function_name);
+              } else {
+                  std::string shrink_overloaded_name_intermediary_function_name = setAndGet_ShrinkJavaOrJniFunName_WithJavaFunName(intermediary_function_name);
+                  if(shrink_overloaded_name_intermediary_function_name.empty()){
+                      Replaceall(imcall, "$imfuncname", intermediary_function_name);
+                  } else{
+                      Replaceall(imcall, "$imfuncname", shrink_overloaded_name_intermediary_function_name.c_str());
+                  }
+              }
+              //JNI register specific logic end
+          }
       }
 
       Replaceall(tm, "$jnicall", imcall);
@@ -2890,6 +2981,14 @@ public:
     if (proxy_flag) {
       String *overloaded_name = getOverloadedName(n);
       String *mangled_overname = Swig_name_construct(getNSpace(), overloaded_name);
+      if (jni_register_flag && jni_confusion_flag) {
+            //JNI register specific logic start
+            std::string shrink_mangled_overname = setAndGet_ShrinkJavaOrJniFunName_WithJavaFunName(mangled_overname);
+            if(!shrink_mangled_overname.empty()){
+                mangled_overname = NewString(shrink_mangled_overname.c_str());
+            }
+            //JNI register specific logic end
+      }
       String *imcall = NewString("");
 
       const String *methodmods = Getattr(n, "feature:java:methodmodifiers");
@@ -3084,7 +3183,22 @@ public:
     String *symname = Getattr(n, "sym:name");
 
     if (proxy_flag) {
-      Printv(destructor_call, full_imclass_name, ".", Swig_name_destroy(getNSpace(), symname), "(swigCPtr)", NIL);
+        if (!jni_register_flag) {
+            Printv(destructor_call, full_imclass_name, ".", Swig_name_destroy(getNSpace(), symname), "(swigCPtr)", NIL);
+        }else{
+            //JNI register specific logic start
+            if (!jni_confusion_flag) {
+                Printv(destructor_call, full_imclass_name, ".", Swig_name_destroy(getNSpace(), symname), "(swigCPtr)", NIL);
+            } else {
+                std::string destroy_shrink_name = setAndGet_ShrinkJavaOrJniFunName_WithJavaFunName(Swig_name_destroy(getNSpace(), symname));
+                if(destroy_shrink_name.empty()){
+                    Printv(destructor_call, full_imclass_name, ".", Swig_name_destroy(getNSpace(), symname), "(swigCPtr)", NIL);
+                } else{
+                    Printv(destructor_call, full_imclass_name, ".", destroy_shrink_name.c_str(), "(swigCPtr)", NIL);
+                }
+            }
+            //JNI register specific logic end
+        }
       generateThrowsClause(n, destructor_throws_clause);
       const String *methodmods = Getattr(n, "feature:java:methodmodifiers");
       if (methodmods)
@@ -3148,7 +3262,6 @@ public:
     if (Getattr(n, "sym:overloaded")) {
       Printv(overloaded_name, Getattr(n, "sym:overname"), NIL);
     }
-
     return overloaded_name;
   }
 
@@ -3218,7 +3331,17 @@ public:
     const String *methodmods = Getattr(n, "feature:java:methodmodifiers");
     methodmods = methodmods ? methodmods : (is_public(n) ? public_string : protected_string);
     Printf(function_code, "  %s static %s %s(", methodmods, return_type, func_name);
-    Printv(imcall, imclass_name, ".", overloaded_name, "(", NIL);
+    if (!jni_register_flag) {
+        Printv(imcall, imclass_name, ".", overloaded_name, "(", NIL);
+    } else {
+        //JNI register specific logic start
+        if (!jni_confusion_flag) {
+            Printv(imcall, imclass_name, ".", overloaded_name, "(", NIL);
+        } else {
+            Printv(imcall, imclass_name, ".", setAndGet_ShrinkJavaOrJniFunName_WithJavaFunName(overloaded_name).c_str(), "(", NIL);
+        }
+        //JNI register specific logic end
+    }
 
     /* Get number of required and total arguments */
     num_arguments = emit_num_arguments(l);
@@ -3604,14 +3727,31 @@ public:
 	replacementname = Copy(classname);
       } else {
 	// use $descriptor if SWIG does not know anything about this type. Note that any typedefs are resolved.
-	replacementname = NewStringf("SWIGTYPE%s", SwigType_manglestr(classnametype));
+    String* manglestr = SwigType_manglestr(classnametype);
+    if (!skipGenTypeWrapperClass) {
+        replacementname = NewStringf("SWIGTYPE%s", manglestr);
+    } else {
+        //JNI register specific logic start
+
+        //remove .p(_p_) prefix
+        Replaceall(manglestr, "_p_", "");
+        //adjust inner class concatenation from "_" to "$"
+        Replaceall(manglestr, "_Iterator", "$Iterator"); //uppercase
+        Replaceall(manglestr, "_iterator", "$iterator"); //lowercase
+
+        replacementname = NewStringf("%s", manglestr);
+        //JNI register specific logic end
+    }
+    Delete(manglestr);
 
 	// Add to hash table so that the type wrapper classes can be created later
-    //JNI register specific logic start
      if(!skipGenTypeWrapperClass) {
          Setattr(swig_types_hash, replacementname, classnametype);
      }
-    //JNI register specific logic end
+     //else{
+     //JNI register specific logic start
+     //JNI register specific logic end
+     //}
       }
     }
     if (jnidescriptor)
@@ -3989,20 +4129,15 @@ public:
         String *swig_module_init_jni = makeValidJniName(swig_module_init);
         String *dmethod_data = NewString("");
 
-
-        Printf(w->def, "#include <regex>\n");
-        Printf(w->def, "SWIGHIDE int JNICALL swigRegisterNatives(JNIEnv *env) {");
-        Printf(w->code, "using namespace std;\n");
-        Printf(w->code, "regex e(\"@p@\");\n");
-        Printf(w->code, "const char *p = \"%s\";\n", package_path);
+        Printf(w->def, "SWIGHIDE int swigRegisterNatives(JNIEnv *env) {");
         String *jniname = makeValidJniName(imclass_name);
-        Printf(w->code, "static const char *jniFunEntryClassName = \"%s/%s\";\n", package_path, jniname);
+        Printf(w->code, "const char *javaClassName = \"%s/%s\";\n", package_path, jniname);
         Delete(jniname);
 
         Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "生成swigRegisterNatives方法\n", "");
 
         if(n_jni_register_methods){
-            Printf(dmethod_data, "static const JNINativeMethod jniFuncEntryMethods[] = {\n");
+            Printf(dmethod_data, "const JNINativeMethod methods[] = {\n");
 
             int n_methods = 0;
             Iterator udata_iter;
@@ -4010,12 +4145,7 @@ public:
             udata_iter = First(jni_register_methods_seq);
             while (udata_iter.item) {
                 UpcallData *udata = udata_iter.item;
-
-                String* rawJavaFunSignature = Copy(Getattr(udata, "javaFunSignature"));
-                String *javaFunSignature = NewStringf("regex_replace(string(\"%s\"),e,p).c_str()", rawJavaFunSignature);
-                Printf(dmethod_data, "{\"%s\",%s,%s}", Getattr(udata, "javaFunName"), javaFunSignature, Getattr(udata, "nativeFunString"));
-                Delete(rawJavaFunSignature);
-                Delete(javaFunSignature);
+                Printf(dmethod_data, "{\"%s\",\"%s\",%s}", Getattr(udata, "javaFunName"), Getattr(udata, "javaFunSignature"), Getattr(udata, "nativeFunString"));
                 ++n_methods;
 
                 udata_iter = Next(udata_iter);
@@ -4025,12 +4155,11 @@ public:
                 Putc('\n', dmethod_data);
             }
 
-            Printf(dmethod_data, "};");
+            Printf(dmethod_data, "};\n");
         }
-        Replaceall(dmethod_data, package_path, "@p@");
         Printv(w->code, dmethod_data, NIL);
 
-        Printf(w->code, "\nint methodsCount = sizeof(jniFuncEntryMethods) / sizeof(jniFuncEntryMethods[0]);\n");
+        Printf(w->code, "\nint methodsCount = sizeof(methods) / sizeof(methods[0]);\n");
         Printf(w->code, "jclass javaClass = env->FindClass(javaClassName);\n");
         Printf(w->code, "if (javaClass == nullptr) {\n");
         Printf(w->code, "  return JNI_FALSE;\n");
@@ -5530,14 +5659,15 @@ public:
 
       String *nativeFunString = NewString("");
       Append(nativeFunString, "(void *)");
-      Append(nativeFunString, getShrinkWname(wname).c_str());
+      Append(nativeFunString, (!jni_confusion_flag) ? wname : setAndGet_ShrinkJavaOrJniFunName_WithJniFunName(wname).c_str());
 
       Setattr(new_udata, "javaFunName", Copy(javafun_name));
       Setattr(new_udata, "javaFunSignature", javaFunSignature);
+//      Setattr(new_udata, "javaFunSignature", "()V");
       Setattr(new_udata, "nativeFunString", nativeFunString);
   }
 
-    std::string setShrinkWname(String *wname) {
+    std::string setAndGet_ShrinkJavaOrJniFunName_WithJniFunName(String *wname) {
         std::string wnamestring(Char(wname));
         if (jni_register_shrink_wname.find(wnamestring) != jni_register_shrink_wname.end()) {
             return jni_register_shrink_wname[wnamestring];
@@ -5549,8 +5679,37 @@ public:
         }
     }
 
-    std::string getShrinkWname(String *wname) {
+    std::string get_ShrinkJavaOrJniFunName_WithJniFunName(String *wname) {
         std::string wnamestring(Char(wname));
+        if (jni_register_shrink_wname.find(wnamestring) != jni_register_shrink_wname.end()) {
+            return jni_register_shrink_wname[wnamestring];
+        } else {
+            return std::string();
+        }
+    }
+
+    std::string setAndGet_ShrinkJavaOrJniFunName_WithJavaFunName(String *javaFunName) {
+        String *jniname = makeValidJniName(javaFunName);
+        String *wname = Swig_name_wrapper(jniname);
+        std::string wnamestring(Char(wname));
+        Delete(jniname);
+        Delete(wname);
+        if (jni_register_shrink_wname.find(wnamestring) != jni_register_shrink_wname.end()) {
+            return jni_register_shrink_wname[wnamestring];
+        } else {
+            std::string fname = std::string("f") + std::to_string(jni_register_shrink_wname_index);
+            jni_register_shrink_wname_index++;
+            jni_register_shrink_wname[wnamestring] = fname;
+            return fname;
+        }
+    }
+
+    std::string get_ShrinkJavaOrJniFunName_WithJavaFunName(String *javaFunName) {
+        String *jniname = makeValidJniName(javaFunName);
+        String *wname = Swig_name_wrapper(jniname);
+        std::string wnamestring(Char(wname));
+        Delete(jniname);
+        Delete(wname);
         if (jni_register_shrink_wname.find(wnamestring) != jni_register_shrink_wname.end()) {
             return jni_register_shrink_wname[wnamestring];
         } else {
