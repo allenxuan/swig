@@ -167,15 +167,15 @@
 %{   void* cPtr = $imcall;
     $typemap(objctype,TYPE) ret = nil;
     if(cPtr) {
-    ret = [[$typemap(objcbasetype,TYPE) alloc] initWithCptr:cPtr swigOwnCObject:YES];
-}
+        ret = [[$typemap(objcbasetype,TYPE) alloc] initWithCptr:cPtr swigOwnCObject:YES];
+    }
     return ret; %}
 %typemap(objcout) CONST TYPE *
 %{   void* cPtr = $imcall;
     $typemap(objctype,TYPE) ret = nil;
     if(cPtr) {
-    ret = [[$typemap(objcbasetype,TYPE) alloc] initWithCptr:cPtr swigOwnCObject:YES];
-}
+        ret = [[$typemap(objcbasetype,TYPE) alloc] initWithCptr:cPtr swigOwnCObject:YES];
+    }
     return ret; %}
 %typemap(objcout) TYPE *CONST&
 %{   #error "typemaps for $1_type not available" %}
