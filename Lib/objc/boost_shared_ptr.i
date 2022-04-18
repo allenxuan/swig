@@ -39,6 +39,11 @@
   } %}
 %typemap(out, fragment="SWIG_null_deleter") CONST TYPE &
 %{ $result = new SWIG_SHARED_PTR_QNAMESPACE::shared_ptr< CONST TYPE >($1 SWIG_NO_NULL_DELETER_$owner); %}
+%typemap(directorin) CONST TYPE &
+%{ $input = new SWIG_SHARED_PTR_QNAMESPACE::shared_ptr< CONST TYPE > (&$1 SWIG_NO_NULL_DELETER_0); %}
+%typemap(directorout) CONST TYPE & %{
+#error "typemaps for $1_type not available"
+%}
 
 // plain pointer by reference
 %typemap(in) TYPE *CONST& ($*1_ltype temp = 0)
