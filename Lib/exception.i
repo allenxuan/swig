@@ -14,14 +14,14 @@
 
 #ifdef SWIGPHP
 %{
-#if PHP_MAJOR >= 8
-# define SWIG_HANDLE_VALUE_ERROR_FOR_PHP8 code == SWIG_ValueError ? zend_ce_value_error :
+#if PHP_MAJOR_VERSION >= 8
+# define SWIG_HANDLE_VALUE_ERROR_FOR_PHP8(code) code == SWIG_ValueError ? zend_ce_value_error :
 #else
-# define SWIG_HANDLE_VALUE_ERROR_FOR_PHP8
+# define SWIG_HANDLE_VALUE_ERROR_FOR_PHP8(code)
 #endif
 #define SWIG_exception(code, msg) do { zend_throw_exception( \
     code == SWIG_TypeError ? zend_ce_type_error : \
-    SWIG_HANDLE_VALUE_ERROR_FOR_PHP8 \
+    SWIG_HANDLE_VALUE_ERROR_FOR_PHP8(code) \
     code == SWIG_DivisionByZero ? zend_ce_division_by_zero_error : \
     code == SWIG_SyntaxError ? zend_ce_parse_error : \
     code == SWIG_OverflowError ? zend_ce_arithmetic_error : \
@@ -134,6 +134,46 @@ SWIGINTERN void SWIG_JavaException(JNIEnv *jenv, int code, const char *msg) {
 #define SWIG_exception(code, msg)\
 { SWIG_JavaException(jenv, code, msg); return $null; }
 #endif // SWIGJAVA
+
+#ifdef SWIGOBJECTIVEC
+%{
+SWIGINTERN void SWIG_ObjcException(int code, const char *msg) {
+  SWIG_ObjcExceptionCodes exception_code = SWIG_ObjcUnknownError;
+  switch(code) {
+  case SWIG_MemoryError:
+    exception_code = SWIG_ObjcOutOfMemoryError;
+    break;
+  case SWIG_IOError:
+    exception_code = SWIG_ObjcIOException;
+    break;
+  case SWIG_SystemError:
+  case SWIG_RuntimeError:
+    exception_code = SWIG_ObjcRuntimeException;
+    break;
+  case SWIG_OverflowError:
+  case SWIG_IndexError:
+    exception_code = SWIG_ObjcIndexOutOfBoundsException;
+    break;
+  case SWIG_DivisionByZero:
+    exception_code = SWIG_ObjcArithmeticException;
+    break;
+  case SWIG_SyntaxError:
+  case SWIG_ValueError:
+  case SWIG_TypeError:
+    exception_code = SWIG_ObjcIllegalArgumentException;
+    break;
+  case SWIG_UnknownError:
+  default:
+    exception_code = SWIG_ObjcUnknownError;
+    break;
+  }
+  SWIG_ObjcThrowException(exception_code, msg);
+}
+%}
+
+#define SWIG_exception(code, msg)\
+{ SWIG_ObjcException(code, msg); return $null; }
+#endif // SWIGOBJECTIVEC
 
 #ifdef SWIGOCAML
 %{
