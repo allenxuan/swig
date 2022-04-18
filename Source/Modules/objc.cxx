@@ -28,6 +28,7 @@ private:
 
     /* Various flags controlling the code generation. */
     bool proxy_flag; // flag: determine should the proxy files be generated or not
+    bool oc_class_suffix_flag; // flag: determine should the name of an oc proxy class carry an "OC" suffix or not
 
     /* State variables which indicate what is being wrapped at the moment. */
     bool member_variable_flag;        // flag: wrapping member variables
@@ -272,6 +273,9 @@ void OBJECTIVEC::main(int argc, char *argv[])
             else if (strcmp(argv[i], "-help") == 0)
             {
                 Printf(stdout, "%s\n", usage);
+            } else if (strcmp(argv[i], "-oc-class-suffix") == 0) {
+                Swig_mark_arg(i);
+                oc_class_suffix_flag = true;
             }
         }
     }
@@ -413,6 +417,8 @@ int OBJECTIVEC::top(Node *n)
         Swig_name_register("wrapper", Char(wrapper_name));
 
         Swig_banner(f_proxy_h);
+        Printf(f_proxy_h, "#ifndef %(upper)s_PROXY_H\n", module);
+        Printf(f_proxy_h, "#define %(upper)s_PROXY_H\n\n", module);
         Printf(f_proxy_h, "\n#import <Foundation/Foundation.h>\n\n");
 
         // ObjectiveC will understand the C code.
@@ -515,6 +521,7 @@ int OBJECTIVEC::top(Node *n)
         Dump(proxy_h_code, f_proxy_h);
         Printf(f_proxy_h, "\n#ifdef __cplusplus\n");
         Printf(f_proxy_h, "}\n");
+        Printf(f_proxy_h, "#endif\n\n");
         Printf(f_proxy_h, "#endif\n\n");
     }
     // Write to proxy.mm, if required
@@ -811,8 +818,16 @@ int OBJECTIVEC::classHandler(Node *n)
         emitProxyClass(n);
 
         // Apply the necessary substitutions
-        Replaceall(proxy_class_decl_code, "$objcclassname", proxy_class_name);
-        Replaceall(proxy_class_defn_code, "$objcclassname", proxy_class_name);
+        if (!oc_class_suffix_flag) {
+            Replaceall(proxy_class_decl_code, "$objcclassname", proxy_class_name);
+            Replaceall(proxy_class_defn_code, "$objcclassname", proxy_class_name);
+        } else {
+            String *class_name_with_suffix = Copy(proxy_class_name);
+            Append(class_name_with_suffix, "_OC");
+            Replaceall(proxy_class_decl_code, "$objcclassname", class_name_with_suffix);
+            Replaceall(proxy_class_defn_code, "$objcclassname", class_name_with_suffix);
+            Delete(class_name_with_suffix);
+        }
 
         // And, dump everything to the proxy files
         Printv(proxy_h_code, proxy_class_decl_code, NIL);
@@ -2029,8 +2044,16 @@ void OBJECTIVEC::emitProxyClass(Node *n)
     Printv(proxy_class_defn_code, "\n", proxy_class_defn_imports, objccimplementationmodifier, " $objcclassname", objcimplementationcode, "\n",
            proxy_class_function_defns, destructor_defn, "\n", typemapLookup(n, "objcclassclose", typemap_lookup_type, WARN_NONE), "\n\n", NIL);
 
-    Replaceall(proxy_class_decl_code, "$objcbaseclass", proxy_class_name);
-    Replaceall(proxy_class_defn_code, "$objcbaseclass", proxy_class_name);
+    if (!oc_class_suffix_flag) {
+        Replaceall(proxy_class_decl_code, "$objcbaseclass", proxy_class_name);
+        Replaceall(proxy_class_defn_code, "$objcbaseclass", proxy_class_name);
+    } else {
+        String *class_name_with_suffix = Copy(proxy_class_name);
+        Append(class_name_with_suffix, "_OC");
+        Replaceall(proxy_class_decl_code, "$objcbaseclass", class_name_with_suffix);
+        Replaceall(proxy_class_defn_code, "$objcbaseclass", class_name_with_suffix);
+        Delete(class_name_with_suffix);
+    }
 
     Delete(baseclass);
     Delete(directordisconnect);
@@ -2073,8 +2096,16 @@ void OBJECTIVEC::emitTypeWrapperClass(String *classname, SwigType *type)
     Printv(swigtypes_mm_code, "\n", objccimplementationmodifier, " $objcclassname", objcimplementationcode,
            "\n", typemapLookup(n, "objcclassclose", type, WARN_NONE), "\n\n", NIL);
 
-    Replaceall(swigtypes_h_code, "$objcclassname", classname);
-    Replaceall(swigtypes_mm_code, "$objcclassname", classname);
+    if(!oc_class_suffix_flag) {
+        Replaceall(swigtypes_h_code, "$objcclassname", classname);
+        Replaceall(swigtypes_mm_code, "$objcclassname", classname);
+    } else {
+        String *class_name_with_suffix = Copy(classname);
+        Append(class_name_with_suffix, "_OC");
+        Replaceall(swigtypes_h_code, "$objcclassname", class_name_with_suffix);
+        Replaceall(swigtypes_mm_code, "$objcclassname", class_name_with_suffix);
+        Delete(class_name_with_suffix);
+    }
 
     Delete(n);
 }
@@ -2196,7 +2227,14 @@ void OBJECTIVEC::substituteClassnameVariable(String *tm, const char *classnameva
         {
             // This is a nested enum.
             String *parent_name = Getattr(p, "sym:name");
-            type_name = NewStringf("enum %s_%s", parent_name, enum_name);
+            if (!oc_class_suffix_flag) {
+                type_name = NewStringf("enum %s_%s", parent_name, enum_name);
+            } else {
+                String *parent_name_with_suffix = Copy(parent_name);
+                Append(parent_name_with_suffix, "_OC");
+                type_name = NewStringf("enum %s_%s", parent_name_with_suffix, enum_name);
+                Delete(parent_name_with_suffix);
+            }
         }
         else
         {
@@ -2222,7 +2260,14 @@ void OBJECTIVEC::substituteClassnameVariable(String *tm, const char *classnameva
             Delete(descriptor);
         }
     }
-    Replaceall(tm, classnamevariable, type_name);
+    if (!oc_class_suffix_flag) {
+        Replaceall(tm, classnamevariable, type_name);
+    } else {
+        String *class_name_with_suffix = Copy(type_name);
+        Append(class_name_with_suffix, "_OC");
+        Replaceall(tm, classnamevariable, class_name_with_suffix);
+        Delete(class_name_with_suffix);
+    }
     Delete(type_name);
 }
 
@@ -2421,7 +2466,7 @@ String *OBJECTIVEC::createProxyName(SwigType *t)
  * tmap_method - typemap method name
  * type - typemap type to lookup
  * warning - warning number to issue if no typemaps found
- * typemap_attributes - the typemap attributes are attached to this node and will 
+ * typemap_attributes - the typemap attributes are attached to this node and will
  *   also be used for temporary storage if non null
  * return is never NULL, unlike Swig_typemap_lookup()
  * ----------------------------------------------------------------------------- */
@@ -2656,7 +2701,14 @@ int OBJECTIVEC::classDirectorMethod(Node *n, Node *parent, String *super)
         Printf(w->code, "::id swigjobj = swig_get_self();\n");
         Printf(w->code, "BOOL swigmethodoverridden = NO;\n");
         Printf(w->code, "if (swigjobj) {\n");
-        Printf(w->code, "  swigmethodoverridden = [swigjobj methodForSelector:@selector(%s)] != [%s instanceMethodForSelector:@selector(%s)];\n", method_signature, classname, method_signature);
+        if (!oc_class_suffix_flag) {
+            Printf(w->code, "  swigmethodoverridden = [swigjobj methodForSelector:@selector(%s)] != [%s instanceMethodForSelector:@selector(%s)];\n", method_signature, classname, method_signature);
+        } else {
+            String *class_name_with_suffix = Copy(classname);
+            Append(class_name_with_suffix, "_OC");
+            Printf(w->code, "  swigmethodoverridden = [swigjobj methodForSelector:@selector(%s)] != [%s instanceMethodForSelector:@selector(%s)];\n", method_signature, class_name_with_suffix, method_signature);
+            Delete(class_name_with_suffix);
+        }
         Printf(w->code, "}\n");
         Printf(w->code, "if (!swigmethodoverridden) {\n");
 
