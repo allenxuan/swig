@@ -159,10 +159,24 @@
 	return ret; %}
 // These will not work, swigOwnCObject:NO will cause a memory leak, swigOwnCObject:YES will
 // delete a c++ object not owned by SWIG
+
+//comments from huangxuanyi(https://github.com/allenxuan):
+//swigOwnCObject:YES will just delete a shared_ptr object rather than the raw object managed by shared_ptr(s).
 %typemap(objcout) CONST TYPE &
-%{   #error "typemaps for $1_type not available" %}
+//%{   #error "typemaps for $1_type not available" %} //original
+%{   void* cPtr = $imcall;
+    $typemap(objctype,TYPE) ret = nil;
+    if(cPtr) {
+    ret = [[$typemap(objcbasetype,TYPE) alloc] initWithCptr:cPtr swigOwnCObject:YES];
+}
+    return ret; %}
 %typemap(objcout) CONST TYPE *
-%{   #error "typemaps for $1_type not available" %}
+%{   void* cPtr = $imcall;
+    $typemap(objctype,TYPE) ret = nil;
+    if(cPtr) {
+    ret = [[$typemap(objcbasetype,TYPE) alloc] initWithCptr:cPtr swigOwnCObject:YES];
+}
+    return ret; %}
 %typemap(objcout) TYPE *CONST&
 %{   #error "typemaps for $1_type not available" %}
 
