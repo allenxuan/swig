@@ -1914,7 +1914,6 @@ void OBJECTIVEC::emitProxyClass(Node *n)
         pure_baseclass = empty_string;
     }
     const String *wanted_base = baseclass ? baseclass : pure_baseclass;
-    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "pure_baseclass=%s, baseclass=%s", pure_baseclass, baseclass);
 
     if (purebase_replace)
     {
@@ -2031,7 +2030,7 @@ void OBJECTIVEC::emitProxyClass(Node *n)
     // the class interface
     String *visibility = NewString("__attribute__ ((visibility(\"default\"))) ");
     String *wanted_base_with_suffix = NULL;
-    if (oc_class_suffix_flag) {
+    if (oc_class_suffix_flag && baseclass) {
         wanted_base_with_suffix = Copy(wanted_base);
         Append(wanted_base_with_suffix, "_OC");
         wanted_base = wanted_base_with_suffix;
