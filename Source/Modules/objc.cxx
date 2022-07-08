@@ -2028,6 +2028,12 @@ void OBJECTIVEC::emitProxyClass(Node *n)
 
     // the class interface
     String *visibility = NewString("__attribute__ ((visibility(\"default\"))) ");
+    String *wanted_base_with_suffix = NULL;
+    if (oc_class_suffix_flag) {
+        wanted_base_with_suffix = Copy(wanted_base);
+        Append(wanted_base_with_suffix, "_OC");
+        wanted_base = wanted_base_with_suffix;
+    }
     Printv(proxy_class_decl_code, proxy_class_decl_imports, proxy_class_enums_code, documentation, visibility,
            objcinterfacemodifier, " $objcclassname",
            (*Char(wanted_base) || *Char(protocols)) ? " : " : "", wanted_base,
@@ -2070,6 +2076,9 @@ void OBJECTIVEC::emitProxyClass(Node *n)
     Delete(directordisconnect);
     Delete(destructor_decl);
     Delete(destructor_defn);
+    if (wanted_base_with_suffix != NULL) {
+        Delete(wanted_base_with_suffix);
+    }
 }
 
 /* ---------------------------------------------------------------------------
