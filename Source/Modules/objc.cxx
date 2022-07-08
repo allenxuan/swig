@@ -1914,6 +1914,7 @@ void OBJECTIVEC::emitProxyClass(Node *n)
         pure_baseclass = empty_string;
     }
     const String *wanted_base = baseclass ? baseclass : pure_baseclass;
+    Swig_warning(WARN_TYPE_UNDEFINED_CLASS, "XuanyiLog", 0, "pure_baseclass=%s, baseclass=%s", pure_baseclass, baseclass);
 
     if (purebase_replace)
     {
