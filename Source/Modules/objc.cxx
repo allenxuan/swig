@@ -868,11 +868,22 @@ int OBJECTIVEC::enumDeclaration(Node *n)
     if (p && !Strcmp(nodeType(p), "class"))
     { // This is a nested enum, prefix the class name
         String *parentname = Getattr(p, "sym:name");
-        enumname = NewStringf("%s_%s", parentname, symname);
+        if (!oc_class_suffix_flag) {
+            enumname = NewStringf("%s_%s", parentname, symname);
+        } else {
+            String *parent_name_with_suffix = Copy(parentname);
+            Append(parent_name_with_suffix, "_OC");
+            enumname = NewStringf("%s_%s", parent_name_with_suffix, symname);
+            Delete(parent_name_with_suffix);
+        }
     }
     else
     {
         enumname = Copy(symname);
+    }
+
+    if (oc_class_suffix_flag) {
+        Append(enumname, "_OC");
     }
 
     if (proxy_flag)
