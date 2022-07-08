@@ -2,6 +2,7 @@
 #include "cparse.h"
 #include <ctype.h>
 #include "javadoc.h"
+#include "swig_string.h"
 
 class OBJECTIVEC : public Language
 {
