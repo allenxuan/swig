@@ -1801,7 +1801,9 @@ void OBJECTIVEC::emitProxyClassConstructor(Node *n)
     Printv(directorconnect, "", NIL);
     if (feature_director)
     {
-        Printf(directorconnect, "if (self) %s((void *)swigCPtr, self); ", Swig_name_wrapper("swigDirectorConnect"));
+        String *swig_director_connect_short_name = Swig_name_member(getNSpace(), getClassPrefix(), "director_connect");
+        Printf(directorconnect, "if (self) %s((void *)swigCPtr, self); ", Swig_name_wrapper(swig_director_connect_short_name));
+        Delete(swig_director_connect_short_name);
     }
 
     // Insert the objcconstructor typemap
@@ -1955,7 +1957,9 @@ void OBJECTIVEC::emitProxyClass(Node *n)
     Printv(directordisconnect, "", NIL);
     if (feature_director)
     {
-        Printf(directordisconnect, "%s((void *)swigCPtr);", Swig_name_wrapper("swigDirectorDisconnect"));
+        String *swig_director_disconnect_short_name = Swig_name_member(getNSpace(), getClassPrefix(), "director_disconnect");
+        Printf(directordisconnect, "%s((void *)swigCPtr);", Swig_name_wrapper(swig_director_disconnect_short_name));
+        Delete(swig_director_disconnect_short_name);
     }
 
     if (tm && *Char(tm))
@@ -3083,8 +3087,10 @@ void OBJECTIVEC::emitDirectorExtraMethods(Node *n)
 
     // Output the director connect method:
     String *norm_name = SwigType_namestr(Getattr(n, "name"));
-    String *swig_director_connect = Swig_name_wrapper("swigDirectorConnect");
-    String *swig_director_disconnect = Swig_name_wrapper("swigDirectorDisconnect");
+    String *swig_director_connect_short_name = Swig_name_member(getNSpace(), getClassPrefix(), "director_connect");
+    String *swig_director_disconnect_short_name = Swig_name_member(getNSpace(), getClassPrefix(), "director_disconnect");
+    String *swig_director_connect = Swig_name_wrapper(swig_director_connect_short_name);
+    String *swig_director_disconnect = Swig_name_wrapper(swig_director_disconnect_short_name);
     String *sym_name = Getattr(n, "sym:name");
     String *dirClassName = directorClassName(n);
     String *smartptr = Getattr(n, "feature:smartptr");
@@ -3127,6 +3133,8 @@ void OBJECTIVEC::emitDirectorExtraMethods(Node *n)
     Printf(wrap_mm_code, "}\n");
     Printf(wrap_mm_code, "\n");
 
+    Delete(swig_director_connect_short_name);
+    Delete(swig_director_disconnect_short_name);
     Delete(swig_director_connect);
     Delete(swig_director_disconnect);
     Delete(norm_name);
