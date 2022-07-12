@@ -951,8 +951,16 @@ int OBJECTIVEC::enumvalueDeclaration(Node *n)
     String *symname = Getattr(n, "sym:name");
     String *value = Getattr(n, "enumvalue");
     Node *parent = parentNode(n);
+    String *parentsymname = NULL;
+    if (parent != NULL) {
+        parentsymname = Copy(Getattr(parent, "sym:name"));
+        if (oc_class_suffix_flag && parentsymname && Len(parentsymname) > 0) {
+            Append(parentsymname, "_OC");
+        }
+    }
     Node *pparent = parentNode(parent);
     String *enumname;
+    String *enumname_with_class_prefix = NULL;
     if (pparent && !Strcmp(nodeType(pparent), "class"))
     { // This is a nested enum, prefix the class name
         String *classname = Getattr(pparent, "sym:name");
@@ -977,7 +985,8 @@ int OBJECTIVEC::enumvalueDeclaration(Node *n)
             Delete(doxygen_comments);
         }
 
-        Printf(proxy_h_code, "  %s", enumname);
+        enumname_with_class_prefix = Swig_name_member(getNSpace(), parentsymname, enumname);
+        Printf(proxy_h_code, "  %s", enumname_with_class_prefix);
         if (value)
         {
             value = Getattr(n, "enumvalue") ? Copy(Getattr(n, "enumvalue")) : Copy(Getattr(n, "enumvalueex"));
@@ -988,7 +997,13 @@ int OBJECTIVEC::enumvalueDeclaration(Node *n)
     SetFlag(parent, "nonempty");
 
     Swig_restore(n);
+    if (parentsymname != NULL) {
+        Delete(parentsymname);
+    }
     Delete(enumname);
+    if (enumname_with_class_prefix != NULL) {
+        Delete(enumname_with_class_prefix);
+    }
     return SWIG_OK;
 }
 
